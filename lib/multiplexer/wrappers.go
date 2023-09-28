@@ -156,6 +156,27 @@ func (c *Conn) ReadProxyLine() (*ProxyLine, error) {
 	return proxyLine, nil
 }
 
+// ReadPrelude reads the specified prelude from the connection, returning true
+// if it succeeds; if the function returns false, no byte has been read and the
+// next bytes to be read will not match the prelude.
+func (c *Conn) ReadPrelude(prelude string) (bool, error) {
+	for i, b := range []byte(prelude) {
+		buf, err := c.reader.Peek(i + 1)
+		if err != nil {
+			return false, trace.Wrap(err)
+		}
+
+		if buf[i] != b {
+			return false, nil
+		}
+	}
+
+	// Discard is guaranteed to succeed if enough bytes are buffered, and we
+	// have peeked the whole prelude
+	_, _ = c.reader.Discard(len(prelude))
+	return true, nil
+}
+
 // returns a Listener that pretends to be listening on addr, closed whenever the
 // parent context is done.
 func newListener(parent context.Context, addr net.Addr) *Listener {
