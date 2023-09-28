@@ -196,6 +196,8 @@ type Listener struct {
 	connC   chan net.Conn
 	cancel  context.CancelFunc
 	context context.Context
+
+	fn func(net.Conn)
 }
 
 // Addr returns listener addr, the address of multiplexer listener
@@ -216,6 +218,15 @@ func (l *Listener) Accept() (net.Conn, error) {
 // HandleConnection injects the connection into the Listener, blocking until the
 // context expires, the connection is accepted or the Listener is closed.
 func (l *Listener) HandleConnection(ctx context.Context, conn net.Conn) {
+	if l.fn != nil {
+		select {
+		case <-ctx.Done():
+			conn.Close()
+		default:
+			go l.fn(conn)
+		}
+		return
+	}
 	select {
 	case <-ctx.Done():
 		conn.Close()

@@ -177,6 +177,15 @@ func (m *Mux) SSH() net.Listener {
 	return m.sshListener
 }
 
+func (m *Mux) SSHFunc(fn func(net.Conn)) {
+	m.Lock()
+	defer m.Unlock()
+	if m.sshListener == nil {
+		m.sshListener = newListener(m.context, m.Config.Listener.Addr())
+	}
+	m.sshListener.fn = fn
+}
+
 // TLS returns listener that receives TLS connections
 func (m *Mux) TLS() net.Listener {
 	m.Lock()
