@@ -302,6 +302,7 @@ func (c *Conn) broadcastLocked() {
 	}
 	close(c.cond)
 	c.cond = make(chan struct{})
+	c.waiters = false
 }
 
 func (c *Conn) waitLocked(timeoutC <-chan time.Time) (timeout bool) {

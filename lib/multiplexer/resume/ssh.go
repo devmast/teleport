@@ -17,6 +17,7 @@ package resume
 import (
 	"context"
 	"crypto/rand"
+	"encoding/binary"
 	"io"
 	"net"
 	"sync"
@@ -26,26 +27,32 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"github.com/gravitational/teleport/lib/multiplexer"
-	"github.com/gravitational/teleport/lib/sshutils"
 	"github.com/gravitational/teleport/lib/utils"
 )
 
 const (
+	protocolString = "teleport-resume-v0"
+
 	sshPrefix     = "SSH-2.0-"
-	clientSuffix  = "\x00teleport-resume-v0"
+	clientSuffix  = "\x00" + protocolString
 	clientPrelude = sshPrefix + clientSuffix
 
-	ServerVersion = sshutils.SSHVersionPrefix + " resume-v0"
-	serverPrelude = ServerVersion + "\r\n"
+	// ServerVersion = sshutils.SSHVersionPrefix + " resume-v0"
+	serverPrelude = protocolString + "\r\n"
 )
 
 type connectionHandler interface {
 	HandleConnection(net.Conn)
 }
 
-func NewResumableSSHServer(sshServer connectionHandler) *ResumableSSHServer {
+func NewResumableSSHServer(sshServer connectionHandler, hostID string) *ResumableSSHServer {
+	hostIDBuf := make([]byte, 8+len(hostID))
+	binary.LittleEndian.PutUint64(hostIDBuf, uint64(len(hostID)))
+	copy(hostIDBuf[8:], hostID)
+
 	return &ResumableSSHServer{
 		sshServer: sshServer,
+		hostIDBuf: hostIDBuf,
 		log:       logrus.WithField(trace.Component, "resume"),
 
 		conns: make(map[[16]byte]*Conn),
@@ -54,6 +61,7 @@ func NewResumableSSHServer(sshServer connectionHandler) *ResumableSSHServer {
 
 type ResumableSSHServer struct {
 	sshServer connectionHandler
+	hostIDBuf []byte
 	log       logrus.FieldLogger
 
 	mu    sync.Mutex
@@ -63,10 +71,8 @@ type ResumableSSHServer struct {
 var _ connectionHandler = (*ResumableSSHServer)(nil)
 
 func (r *ResumableSSHServer) HandleConnection(nc net.Conn) {
-	// we write the server prelude, then we get ready to leave the connection to
-	// the underlying SSH server (which must then send the exact same prelude)
 	_, _ = nc.Write([]byte(serverPrelude))
-	conn := multiplexer.NewConnWithWriteSkip(nc, len(serverPrelude))
+	conn := multiplexer.NewConn(nc)
 
 	isResume, err := conn.ReadPrelude(clientPrelude)
 	if err != nil {
@@ -83,7 +89,6 @@ func (r *ResumableSSHServer) HandleConnection(nc net.Conn) {
 		r.sshServer.HandleConnection(conn)
 		return
 	}
-	_, _ = conn.Write([]byte(serverPrelude)) // skipped
 
 	isNew, err := conn.ReadPrelude("\x00")
 	if err != nil {
@@ -105,6 +110,14 @@ func (r *ResumableSSHServer) HandleConnection(nc net.Conn) {
 		resumptionToken[0] |= 0x80
 
 		if _, err := conn.Write(resumptionToken[:]); err != nil {
+			if !utils.IsOKNetworkError(err) {
+				r.log.WithError(err).Error("Error while handling connection.")
+			}
+			conn.Close()
+			return
+		}
+
+		if _, err := conn.Write(r.hostIDBuf); err != nil {
 			if !utils.IsOKNetworkError(err) {
 				r.log.WithError(err).Error("Error while handling connection.")
 			}
@@ -139,11 +152,12 @@ func (r *ResumableSSHServer) HandleConnection(nc net.Conn) {
 		return
 	}
 
+	conn.Write([]byte("\x01"))
 	r.log.Info("ATTACHING CONNECTION")
 	<-resumableConn.Attach(conn)
 }
 
-func NewResumableSSHClientConn(nc net.Conn, connCtx context.Context, dial func(connCtx context.Context) (net.Conn, error)) (net.Conn, error) {
+func NewResumableSSHClientConn(nc net.Conn, connCtx context.Context, dial func(connCtx context.Context, addrPort string) (net.Conn, error)) (net.Conn, error) {
 	// we must send the first 8 bytes of the version string; thankfully, no
 	// matter which SSH client we'll end up using, the handshake will almost
 	// always start with `SSH-2.0-`
@@ -152,7 +166,7 @@ func NewResumableSSHClientConn(nc net.Conn, connCtx context.Context, dial func(c
 	// to be able to handle (without resumption support) handshakes like
 	// `SSH-2.0\r\n` which is technically valid
 	_, _ = nc.Write([]byte(sshPrefix))
-	conn := multiplexer.NewConnWithWriteSkip(nc, len(sshPrefix))
+	conn := multiplexer.NewConnWithWriteSkip(nc, uint32(len(sshPrefix)))
 
 	isResume, err := conn.ReadPrelude(serverPrelude)
 	if err != nil {
@@ -173,6 +187,26 @@ func NewResumableSSHClientConn(nc net.Conn, connCtx context.Context, dial func(c
 	if _, err := io.ReadFull(conn, resumptionToken[:]); err != nil {
 		conn.Close()
 		return nil, trace.Wrap(err)
+	}
+
+	var hostIDPort string
+	{
+		var hostIDLenBuf [8]byte
+		if _, err := io.ReadFull(conn, hostIDLenBuf[:]); err != nil {
+			conn.Close()
+			return nil, trace.Wrap(err)
+		}
+		hostIDLen := binary.LittleEndian.Uint64(hostIDLenBuf[:])
+		if hostIDLen > 256 {
+			conn.Close()
+			return nil, trace.BadParameter("overlong hostID %v", hostIDLen)
+		}
+		hostIDBuf := make([]byte, hostIDLen)
+		if _, err := io.ReadFull(conn, hostIDBuf); err != nil {
+			conn.Close()
+			return nil, trace.Wrap(err)
+		}
+		hostIDPort = string(hostIDBuf) + ":0"
 	}
 
 	resumableConn := NewConn(conn.LocalAddr(), conn.RemoteAddr())
@@ -208,7 +242,7 @@ func NewResumableSSHClientConn(nc net.Conn, connCtx context.Context, dial func(c
 				return
 			}
 			logrus.Debug("Dialing.")
-			nc, err := dial(connCtx)
+			nc, err := dial(connCtx, hostIDPort)
 			if err != nil {
 				logrus.Errorf("Failed to dial: %v.", err.Error())
 				continue
@@ -235,6 +269,18 @@ func NewResumableSSHClientConn(nc net.Conn, connCtx context.Context, dial func(c
 				c.Close()
 				continue
 			}
+
+			success, err := c.ReadPrelude("\x01")
+			if err != nil || !success {
+				if err != nil {
+					logrus.Errorf("Error reading confirmation: %v.", err)
+				} else {
+					logrus.Errorf("Error reading confirmation: connection not found.")
+				}
+				c.Close()
+				continue
+			}
+
 			logrus.Info("Connection resumed.")
 
 			detached = resumableConn.Attach(c)

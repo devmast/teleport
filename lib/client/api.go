@@ -1632,14 +1632,17 @@ func (tc *TeleportClient) ConnectToNode(ctx context.Context, clt *ClusterClient,
 		defer span.End()
 
 		// try connecting to the node with the certs we already have
+		log.Infof("ConnectToNode DialHost(ctx, %q, %q, ...)", nodeDetails.Addr, nodeDetails.Cluster)
 		conn, details, err := clt.ProxyClient.DialHost(ctx, nodeDetails.Addr, nodeDetails.Cluster, tc.localAgent.ExtendedAgent)
 		if err != nil {
 			directResultC <- clientRes{err: err}
 			return
 		}
 
-		conn, err = resume.NewResumableSSHClientConn(conn, ctx, func(connCtx context.Context) (net.Conn, error) {
-			c, _, err := clt.ProxyClient.DialHost(connCtx, nodeDetails.Addr, nodeDetails.Cluster, nil)
+		nodeCluster := nodeDetails.Cluster
+		conn, err = resume.NewResumableSSHClientConn(conn, ctx, func(connCtx context.Context, addrPort string) (net.Conn, error) {
+			log.Infof("resumable DialHost(ctx, %q, %q, nil)", addrPort, nodeCluster)
+			c, _, err := clt.ProxyClient.DialHost(connCtx, addrPort, nodeCluster, nil)
 			return c, err
 		})
 		if err != nil {
@@ -1779,13 +1782,16 @@ func (tc *TeleportClient) connectToNodeWithMFA(ctx context.Context, clt *Cluster
 		return nil, trace.Wrap(err)
 	}
 
+	log.Infof("connectToNodeWithMFA DialHost(ctx, %q, %q, ...)", nodeDetails.Addr, nodeDetails.Cluster)
 	conn, details, err := clt.ProxyClient.DialHost(ctx, nodeDetails.Addr, nodeDetails.Cluster, tc.localAgent.ExtendedAgent)
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
 
-	conn, err = resume.NewResumableSSHClientConn(conn, ctx, func(ctx context.Context) (net.Conn, error) {
-		c, _, err := clt.ProxyClient.DialHost(ctx, nodeDetails.Addr, nodeDetails.Cluster, nil)
+	nodeCluster := nodeDetails.Cluster
+	conn, err = resume.NewResumableSSHClientConn(conn, ctx, func(connCtx context.Context, addrPort string) (net.Conn, error) {
+		log.Infof("resumable DialHost(ctx, %q, %q, nil)", addrPort, nodeCluster)
+		c, _, err := clt.ProxyClient.DialHost(connCtx, addrPort, nodeCluster, nil)
 		return c, err
 	})
 	if err != nil {
