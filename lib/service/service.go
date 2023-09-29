@@ -109,6 +109,7 @@ import (
 	"github.com/gravitational/teleport/lib/limiter"
 	"github.com/gravitational/teleport/lib/modules"
 	"github.com/gravitational/teleport/lib/multiplexer"
+	"github.com/gravitational/teleport/lib/multiplexer/resume"
 	"github.com/gravitational/teleport/lib/observability/tracing"
 	"github.com/gravitational/teleport/lib/openssh"
 	"github.com/gravitational/teleport/lib/plugin"
@@ -2665,6 +2666,7 @@ func (process *TeleportProcess) initSSH() error {
 			regular.SetSessionController(sessionController),
 			regular.SetCAGetter(authClient.GetCertAuthority),
 			regular.SetPublicAddrs(cfg.SSH.PublicAddrs),
+			regular.SetServerVersion(resume.ServerVersion),
 		)
 		if err != nil {
 			return trace.Wrap(err)
@@ -2672,6 +2674,7 @@ func (process *TeleportProcess) initSSH() error {
 		defer func() { warnOnErr(s.Close(), log) }()
 
 		var agentPool *reversetunnel.AgentPool
+		resumeHandler := resume.NewResumableSSHServer(s)
 		if !conn.UseTunnel() {
 			listener, err := process.importOrCreateListener(ListenerNodeSSH, cfg.SSH.Addr.Addr)
 			if err != nil {
@@ -2702,6 +2705,7 @@ func (process *TeleportProcess) initSSH() error {
 			}()
 			defer mux.Close()
 
+			mux.SSHFunc(resumeHandler.HandleConnection)
 			go s.Serve(limiter.WrapListener(mux.SSH()))
 		} else {
 			// Start the SSH server. This kicks off updating labels and starting the
@@ -2721,7 +2725,7 @@ func (process *TeleportProcess) initSSH() error {
 					AccessPoint:          conn.Client,
 					HostSigner:           conn.ServerIdentity.KeySigner,
 					Cluster:              conn.ServerIdentity.Cert.Extensions[utils.CertExtensionAuthority],
-					Server:               s,
+					Server:               resumeHandler,
 					FIPS:                 process.Config.FIPS,
 					ConnectedProxyGetter: proxyGetter,
 				})
