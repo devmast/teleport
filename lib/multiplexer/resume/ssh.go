@@ -66,7 +66,7 @@ func (r *ResumableSSHServer) HandleConnection(nc net.Conn) {
 	// we write the server prelude, then we get ready to leave the connection to
 	// the underlying SSH server (which must then send the exact same prelude)
 	_, _ = nc.Write([]byte(serverPrelude))
-	conn := multiplexer.NewConnWriteSkip(nc, len(serverPrelude))
+	conn := multiplexer.NewConnWithWriteSkip(nc, len(serverPrelude))
 
 	isResume, err := conn.ReadPrelude(clientPrelude)
 	if err != nil {
@@ -118,8 +118,8 @@ func (r *ResumableSSHServer) HandleConnection(nc net.Conn) {
 		r.mu.Unlock()
 
 		go r.sshServer.HandleConnection(resumableConn)
-
 		<-resumableConn.Attach(conn)
+		return
 	}
 
 	r.log.Info("===== REATTACHING CONNECTION ======")
@@ -143,7 +143,7 @@ func (r *ResumableSSHServer) HandleConnection(nc net.Conn) {
 	<-resumableConn.Attach(conn)
 }
 
-func NewResumableSSHClientConn(nc net.Conn, dial func(ctx context.Context) (net.Conn, error)) (net.Conn, error) {
+func NewResumableSSHClientConn(nc net.Conn, connCtx context.Context, dial func(connCtx context.Context) (net.Conn, error)) (net.Conn, error) {
 	// we must send the first 8 bytes of the version string; thankfully, no
 	// matter which SSH client we'll end up using, the handshake will almost
 	// always start with `SSH-2.0-`
@@ -152,7 +152,7 @@ func NewResumableSSHClientConn(nc net.Conn, dial func(ctx context.Context) (net.
 	// to be able to handle (without resumption support) handshakes like
 	// `SSH-2.0\r\n` which is technically valid
 	_, _ = nc.Write([]byte(sshPrefix))
-	conn := multiplexer.NewConnWriteSkip(nc, len(sshPrefix))
+	conn := multiplexer.NewConnWithWriteSkip(nc, len(sshPrefix))
 
 	isResume, err := conn.ReadPrelude(serverPrelude)
 	if err != nil {
@@ -179,44 +179,63 @@ func NewResumableSSHClientConn(nc net.Conn, dial func(ctx context.Context) (net.
 	detached := resumableConn.Attach(conn)
 
 	go func() {
+		reconnectTicker := time.NewTicker(30 * time.Second)
+		defer reconnectTicker.Stop()
+
 		var backoff time.Duration
 		for {
-			<-detached
-			if closed, _ := resumableConn.Status(); closed {
+			select {
+			case <-detached:
+			case <-connCtx.Done():
+				resumableConn.Close()
+			case <-reconnectTicker.C:
+			}
+
+			closed, attached := resumableConn.Status()
+			if closed {
 				return
 			}
 
-			time.Sleep(backoff)
-			backoff += 50 * time.Millisecond
+			if attached {
+				logrus.Debug("Attempting periodic connection replacement.")
+			} else {
+				logrus.Debugf("Connection lost, reconnecting after %v.", backoff)
+				time.Sleep(backoff)
+				backoff += 500 * time.Millisecond
+			}
 
-			nc, err := dial(context.Background())
+			if connCtx.Err() != nil {
+				return
+			}
+			logrus.Debug("Dialing.")
+			nc, err := dial(connCtx)
 			if err != nil {
-				logrus.Errorf("FAILED DIAL %v", err.Error())
+				logrus.Errorf("Failed to dial: %v.", err.Error())
 				continue
 			}
 
 			c := multiplexer.NewConn(nc)
 			if _, err := c.Write([]byte(clientPrelude)); err != nil {
-				logrus.Errorf("ERROR WRITING PRELUDE %v", err.Error())
+				logrus.Errorf("Error writing resumption prelude: %v.", err.Error())
 				c.Close()
 				continue
 			}
 			isResume, err := c.ReadPrelude(serverPrelude)
 			if err != nil || !isResume {
 				if err != nil {
-					logrus.Errorf("ERROR READING PRELUDE %v", err.Error())
+					logrus.Errorf("Error reading resumption prelude: %v.", err.Error())
 				} else {
-					logrus.Errorf("NOT RESUME")
+					logrus.Errorf("Error reading resumption prelude: server is somehow not resumable.")
 				}
 				c.Close()
 				continue
 			}
 			if _, err := c.Write(resumptionToken[:]); err != nil {
-				logrus.Errorf("ERROR WRITING TOKEN %v", err)
+				logrus.Errorf("Error writing resumption token: %v.", err)
 				c.Close()
 				continue
 			}
-			logrus.Info("SUCCESSFUL RESUME; ATTACHING")
+			logrus.Info("Connection resumed.")
 
 			detached = resumableConn.Attach(c)
 			backoff = 0
