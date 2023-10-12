@@ -35,6 +35,7 @@ import (
 	"github.com/gravitational/trace"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/gravitational/teleport"
 	"github.com/gravitational/teleport/api/client"
@@ -46,6 +47,7 @@ import (
 	libclient "github.com/gravitational/teleport/lib/client"
 	"github.com/gravitational/teleport/lib/client/db/dbcmd"
 	"github.com/gravitational/teleport/lib/defaults"
+	"github.com/gravitational/teleport/lib/multiplexer/resume"
 	"github.com/gravitational/teleport/lib/srv/alpnproxy"
 	alpncommon "github.com/gravitational/teleport/lib/srv/alpnproxy/common"
 	"github.com/gravitational/teleport/lib/tlsca"
@@ -65,19 +67,46 @@ func onProxyCommandSSH(cf *CLIConf) error {
 		return trace.Wrap(err)
 	}
 
+	targetHost, targetPort, err := net.SplitHostPort(tc.Host)
+	if err != nil {
+		targetHost = tc.Host
+		targetPort = strconv.Itoa(tc.HostPort)
+	}
+	targetHost = cleanTargetHost(targetHost, tc.WebProxyHost(), tc.SiteName)
+	target := fmt.Sprintf("%s:%s", targetHost, targetPort)
+
 	err = libclient.RetryWithRelogin(cf.Context, tc, func() error {
-		proxyParams, err := getSSHProxyParams(cf, tc)
+		clt, err := tc.ConnectToCluster(cf.Context)
+		if err != nil {
+			return trace.Wrap(err)
+		}
+		defer clt.Close()
+
+		conn, _, err := clt.ProxyClient.DialHost(cf.Context, target, tc.SiteName, tc.LocalAgent())
 		if err != nil {
 			return trace.Wrap(err)
 		}
 
-		if len(tc.JumpHosts) > 0 {
-			err := setupJumpHost(cf, tc, proxyParams.clusterName)
-			if err != nil {
-				return trace.Wrap(err)
-			}
+		conn, err = resume.NewResumableSSHClientConn(conn, cf.Context, func(connCtx context.Context, addrPort string) (net.Conn, error) {
+			log.Infof("proxy DialHost(ctx, %q, %q, nil)", addrPort, tc.SiteName)
+			c, _, err := clt.ProxyClient.DialHost(cf.Context, addrPort, tc.SiteName, nil)
+			return c, trace.Wrap(err)
+		})
+		if err != nil {
+			return trace.Wrap(err)
 		}
-		return trace.Wrap(sshProxy(cf.Context, tc, *proxyParams))
+		defer conn.Close()
+
+		var eg errgroup.Group
+		eg.Go(func() error {
+			_, err := io.Copy(os.Stdout, conn)
+			return err
+		})
+		eg.Go(func() error {
+			_, err := io.Copy(conn, os.Stdin)
+			return err
+		})
+		return eg.Wait()
 	})
 	return trace.Wrap(err)
 }
