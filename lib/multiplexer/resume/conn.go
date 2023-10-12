@@ -297,7 +297,7 @@ func (c *Conn) run(nc net.Conn) {
 			if receiveStart > sentReceiveStart {
 				sendAdvance = receiveStart - sentReceiveStart
 			}
-			if len(sendBuf) > 0 || sendAdvance > minAdvance {
+			if len(sendBuf) > 0 || sendAdvance > minAdvance || (remoteWindowSize == 0 && sendAdvance > 0) {
 				break
 			}
 			if shouldExit := c.waitLocked(readDone); shouldExit {
