@@ -210,6 +210,7 @@ func NewResumableSSHClientConn(nc net.Conn, connCtx context.Context, dial func(c
 	}
 
 	resumableConn := NewConn(conn.LocalAddr(), conn.RemoteAddr())
+	resumableConn.AllowRoaming()
 	detached := resumableConn.Attach(conn)
 
 	go func() {

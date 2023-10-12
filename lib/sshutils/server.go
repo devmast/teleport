@@ -470,6 +470,9 @@ func (s *Server) HandleConnection(conn net.Conn) {
 		defer s.ingressReporter.ConnectionClosed(s.ingressService, conn)
 	}
 
+	// we need to extract this before any net.Conn wrapper
+	roamingAllower, _ := conn.(interface{ AllowRoaming() })
+
 	// apply idle read/write timeout to this connection.
 	conn = utils.ObeyIdleTimeout(conn,
 		defaults.DefaultIdleConnectionDuration,
@@ -489,6 +492,22 @@ func (s *Server) HandleConnection(conn net.Conn) {
 		}
 		conn.SetDeadline(time.Time{})
 		return
+	}
+
+	if sconn.Permissions != nil {
+		if roamingAllower != nil {
+			_, hasSourceAddress := sconn.Permissions.CriticalOptions["source-address"]
+			if !hasSourceAddress {
+				roamingAllower.AllowRoaming()
+				s.log.Debug("Accepted connection without the source-address extension, enabling roaming.")
+			} else {
+				s.log.Debug("Accepted connection with the source-address extension, not enabling roaming.")
+			}
+		} else {
+			s.log.Debug("Connection object doesn't support roaming.")
+		}
+	} else {
+		s.log.Warn("Accepted connection with no permissions (this is a bug).")
 	}
 
 	if s.ingressReporter != nil {

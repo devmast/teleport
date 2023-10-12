@@ -39,11 +39,12 @@ func NewConn(localAddr, remoteAddr net.Addr) *Conn {
 }
 
 type Conn struct {
-	localAddr  net.Addr
-	remoteAddr net.Addr
-
 	mu   sync.Mutex
 	cond chan struct{}
+
+	localAddr    net.Addr
+	remoteAddr   net.Addr
+	allowRoaming bool
 
 	closed bool
 	// current is set iff the Conn is attached; it's cleared at the end of run()
@@ -93,19 +94,53 @@ func (c *Conn) waitLocked(timeoutC <-chan time.Time) (timeout bool) {
 	}
 }
 
+func (c *Conn) AllowRoaming() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.allowRoaming = true
+}
+
+// sameTCPSourceAddress returns true if the two [net.Addr]s are both
+// [*net.TCPAddr] (like golang.org/x/crypto/ssh.checkSourceAddress requires) and
+// if the IP addresses are equal.
+func sameTCPSourceAddress(addr1, addr2 net.Addr) bool {
+	t1, ok := addr1.(*net.TCPAddr)
+	if !ok {
+		return false
+	}
+	t2, ok := addr2.(*net.TCPAddr)
+	if !ok {
+		return false
+	}
+
+	return t1.IP.Equal(t2.IP)
+}
+
 func (c *Conn) Attach(nc net.Conn) (detached chan struct{}) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	c.detachLocked()
-
 	detached = make(chan struct{})
+
+	localAddr := nc.LocalAddr()
+	remoteAddr := nc.RemoteAddr()
+
+	if !c.allowRoaming && !sameTCPSourceAddress(c.remoteAddr, remoteAddr) {
+		nc.Close()
+		close(detached)
+		return detached
+	}
+
+	c.detachLocked()
 
 	if c.closed {
 		nc.Close()
 		close(detached)
 		return detached
 	}
+
+	c.localAddr = localAddr
+	c.remoteAddr = remoteAddr
 
 	c.current = nc
 	c.broadcastLocked()
@@ -308,11 +343,15 @@ func (c *Conn) Close() error {
 
 // LocalAddr implements [net.Conn].
 func (c *Conn) LocalAddr() net.Addr {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	return c.localAddr
 }
 
 // RemoteAddr implements [net.Conn].
 func (c *Conn) RemoteAddr() net.Addr {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	return c.remoteAddr
 }
 
