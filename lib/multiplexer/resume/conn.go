@@ -32,21 +32,18 @@ const (
 )
 
 func NewConn(localAddr, remoteAddr net.Addr) *Conn {
-	c := &Conn{
+	return &Conn{
 		localAddr:  localAddr,
 		remoteAddr: remoteAddr,
-		cond:       make(chan struct{}),
 	}
-	return c
 }
 
 type Conn struct {
 	localAddr  net.Addr
 	remoteAddr net.Addr
 
-	mu      sync.Mutex
-	cond    chan struct{}
-	waiters bool
+	mu   sync.Mutex
+	cond chan struct{}
 
 	closed bool
 	// current is set iff the Conn is attached; it's cleared at the end of run()
@@ -72,6 +69,29 @@ type Conn struct {
 }
 
 var _ net.Conn = (*Conn)(nil)
+
+func (c *Conn) broadcastLocked() {
+	if c.cond == nil {
+		return
+	}
+	close(c.cond)
+	c.cond = nil
+}
+
+func (c *Conn) waitLocked(timeoutC <-chan time.Time) (timeout bool) {
+	if c.cond == nil {
+		c.cond = make(chan struct{})
+	}
+	cond := c.cond
+	c.mu.Unlock()
+	defer c.mu.Lock()
+	select {
+	case <-cond:
+		return false
+	case <-timeoutC:
+		return true
+	}
+}
 
 func (c *Conn) Attach(nc net.Conn) (detached chan struct{}) {
 	c.mu.Lock()
@@ -294,28 +314,6 @@ func (c *Conn) LocalAddr() net.Addr {
 // RemoteAddr implements [net.Conn].
 func (c *Conn) RemoteAddr() net.Addr {
 	return c.remoteAddr
-}
-
-func (c *Conn) broadcastLocked() {
-	if !c.waiters {
-		return
-	}
-	close(c.cond)
-	c.cond = make(chan struct{})
-	c.waiters = false
-}
-
-func (c *Conn) waitLocked(timeoutC <-chan time.Time) (timeout bool) {
-	cond := c.cond
-	c.waiters = true
-	c.mu.Unlock()
-	defer c.mu.Lock()
-	select {
-	case <-cond:
-		return false
-	case <-timeoutC:
-		return true
-	}
 }
 
 func deadlineTimer(deadline time.Time, timer *time.Timer) (*time.Timer, <-chan time.Time) {
