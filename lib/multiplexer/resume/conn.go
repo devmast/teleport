@@ -176,8 +176,12 @@ func (c *Conn) Status() (closed, attached bool) {
 }
 
 func (c *Conn) run(nc net.Conn) {
-	readDone := make(chan time.Time)
-	defer func() { <-readDone }()
+	var readDone chan time.Time
+	defer func() {
+		if readDone != nil {
+			<-readDone
+		}
+	}()
 
 	defer func() {
 		c.mu.Lock()
@@ -232,6 +236,7 @@ func (c *Conn) run(nc net.Conn) {
 	//   c.replayStart <= remoteReplayStart <= c.replayStart + len(c.replayBuffer)
 	//   0 <= c.receiveEnd - len(c.receiveBuffer) <= sentReceiveStart <= c.receiveEnd
 
+	readDone = make(chan time.Time)
 	go func() {
 		defer close(readDone)
 
