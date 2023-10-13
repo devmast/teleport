@@ -165,8 +165,11 @@ func NewResumableSSHClientConn(nc net.Conn, connCtx context.Context, dial func(c
 	// TODO(espadolini): we could read the handshake from the client side first,
 	// to be able to handle (without resumption support) handshakes like
 	// `SSH-2.0\r\n` which is technically valid
-	_, _ = nc.Write([]byte(sshPrefix))
-	conn := multiplexer.NewConnWithWriteSkip(nc, uint32(len(sshPrefix)))
+	if _, err := nc.Write([]byte(sshPrefix)); err != nil {
+		nc.Close()
+		return nil, trace.Wrap(err)
+	}
+	conn := multiplexer.NewConn(nc)
 
 	isResume, err := conn.ReadPrelude(serverPrelude)
 	if err != nil {
@@ -174,9 +177,12 @@ func NewResumableSSHClientConn(nc net.Conn, connCtx context.Context, dial func(c
 		return nil, trace.Wrap(err)
 	}
 	if !isResume {
-		return conn, nil
+		// the server side doesn't support resumption, so we just return the
+		// conn after having written sshPrefix to it already - we are going to
+		// assume that the application side will write the sshPrefix to it
+		// again, so we skip it
+		return newWriteSkipConn(conn, uint32(len(sshPrefix))), nil
 	}
-	_, _ = conn.Write([]byte(sshPrefix)) // skipped
 
 	if _, err := conn.Write([]byte(clientSuffix + "\x00")); err != nil {
 		conn.Close()

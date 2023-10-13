@@ -20,8 +20,6 @@ import (
 	"bufio"
 	"context"
 	"net"
-	"sync"
-	"sync/atomic"
 
 	"github.com/gravitational/trace"
 
@@ -37,11 +35,6 @@ type Conn struct {
 	protocol  Protocol
 	proxyLine *ProxyLine
 	reader    *bufio.Reader
-
-	// writeMu protects against concurrent Write calls while writeSkip is nonzero.
-	writeMu sync.Mutex
-	// writeSkip contains how many bytes we still have to skip while writing.
-	writeSkip atomic.Uint32
 }
 
 // NewConn returns a net.Conn wrapper that supports peeking into the connection.
@@ -52,16 +45,6 @@ func NewConn(conn net.Conn) *Conn {
 	}
 }
 
-// NewConnWithWriteSkip returns a net.Conn wrapper that supports peeking into
-// the connection, skipping a certain amount of bytes on write (useful if
-// specific bytes have been already sent but the application using the Conn
-// shouldn't be made aware of it).
-func NewConnWithWriteSkip(conn net.Conn, writeSkip uint32) *Conn {
-	c := NewConn(conn)
-	c.writeSkip.Store(writeSkip)
-	return c
-}
-
 // NetConn returns the underlying net.Conn.
 func (c *Conn) NetConn() net.Conn {
 	return c.Conn
@@ -70,41 +53,6 @@ func (c *Conn) NetConn() net.Conn {
 // Read reads from connection
 func (c *Conn) Read(p []byte) (int, error) {
 	return c.reader.Read(p)
-}
-
-func (c *Conn) Write(p []byte) (int, error) {
-	// fast path without locking; as soon as writeSkip is confirmed to be zero,
-	// all bets are off about concurrent Write calls
-	if c.writeSkip.Load() == 0 {
-		return c.Conn.Write(p)
-	}
-
-	c.writeMu.Lock()
-	writeSkip := c.writeSkip.Load()
-	if writeSkip == 0 {
-		// writeSkip became zero while we were blocked on writeMu, no need to
-		// serialize writes anymore
-		c.writeMu.Unlock()
-		return c.Conn.Write(p)
-	}
-	defer c.writeMu.Unlock()
-
-	if uint64(len(p)) <= uint64(writeSkip) {
-		// still check for a write deadline or other errors
-		if _, err := c.Conn.Write(nil); err != nil {
-			return 0, trace.Wrap(err)
-		}
-		c.writeSkip.Store(writeSkip - uint32(len(p)))
-		return len(p), nil
-	}
-
-	n, err := c.Conn.Write(p[writeSkip:])
-	if n > 0 || err == nil {
-		n += int(writeSkip)
-		c.writeSkip.Store(0)
-	}
-
-	return n, trace.Wrap(err)
 }
 
 // LocalAddr returns local address of the connection
