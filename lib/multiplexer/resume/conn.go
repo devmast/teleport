@@ -23,6 +23,8 @@ import (
 	"slices"
 	"sync"
 	"time"
+
+	"github.com/sirupsen/logrus"
 )
 
 const (
@@ -126,6 +128,7 @@ func (c *Conn) Attach(nc net.Conn) (detached chan struct{}) {
 	remoteAddr := nc.RemoteAddr()
 
 	if !c.allowRoaming && !sameTCPSourceAddress(c.remoteAddr, remoteAddr) {
+		logrus.Error("not same TCP source address")
 		nc.Close()
 		close(detached)
 		return detached
@@ -134,6 +137,7 @@ func (c *Conn) Attach(nc net.Conn) (detached chan struct{}) {
 	c.detachLocked()
 
 	if c.closed {
+		logrus.Error("actually closed")
 		nc.Close()
 		close(detached)
 		return detached
@@ -192,15 +196,18 @@ func (c *Conn) run(nc net.Conn) {
 	ncR := bufio.NewReader(nc)
 
 	if _, err := nc.Write(handshake); err != nil {
+		logrus.Error("failed handshake write")
 		return
 	}
 
 	remoteReplayStart, err := binary.ReadUvarint(ncR)
 	if err != nil {
+		logrus.Error("failed readuvarint 1")
 		return
 	}
 	remoteWindowSize, err := binary.ReadUvarint(ncR)
 	if err != nil {
+		logrus.Error("failed readuvarint 2")
 		return
 	}
 
@@ -209,6 +216,7 @@ func (c *Conn) run(nc net.Conn) {
 		// we advanced our replay buffer past the read point of the peer, or the
 		// read point of the peer is in the future - can't continue, either way
 		c.mu.Unlock()
+		logrus.Error("incompatible resume")
 		return
 	}
 	if c.replayStart != remoteReplayStart {
@@ -217,6 +225,8 @@ func (c *Conn) run(nc net.Conn) {
 		c.broadcastLocked()
 	}
 	c.mu.Unlock()
+
+	logrus.Error("handshake completed successfully")
 
 	// Invariants:
 	//   c.replayStart <= remoteReplayStart <= c.replayStart + len(c.replayBuffer)
@@ -228,6 +238,7 @@ func (c *Conn) run(nc net.Conn) {
 		for {
 			advanceWindow, err := binary.ReadUvarint(ncR)
 			if err != nil {
+				logrus.Error("failed readuvarint window")
 				return
 			}
 
@@ -239,6 +250,7 @@ func (c *Conn) run(nc net.Conn) {
 				if advanceWindow > len64(c.replayBuffer) {
 					// trying to move our cursor past the replay buffer?
 					c.mu.Unlock()
+					logrus.Error("window advance past end of replay buffer")
 					return
 				}
 				remoteWindowSize += advanceWindow
@@ -250,6 +262,7 @@ func (c *Conn) run(nc net.Conn) {
 
 			frameSize, err := binary.ReadUvarint(ncR)
 			if err != nil {
+				logrus.Error("failed readuvarint framesize")
 				return
 			}
 
@@ -260,6 +273,7 @@ func (c *Conn) run(nc net.Conn) {
 			}
 			if frameSize > bufferSize-len64(c.receiveBuffer) || frameSize > maxFrameSize {
 				c.mu.Unlock()
+				logrus.Error("oversized frame")
 				return
 			}
 			c.receiveBuffer = slices.Grow(c.receiveBuffer, int(frameSize))
@@ -277,6 +291,7 @@ func (c *Conn) run(nc net.Conn) {
 			}
 
 			if err != nil {
+				logrus.Error("failed read frame")
 				return
 			}
 		}
@@ -302,6 +317,7 @@ func (c *Conn) run(nc net.Conn) {
 			}
 			if shouldExit := c.waitLocked(readDone); shouldExit {
 				c.mu.Unlock()
+				logrus.Error("shouldExit")
 				return
 			}
 		}
@@ -310,9 +326,11 @@ func (c *Conn) run(nc net.Conn) {
 		metaBuf := binary.AppendUvarint(nil, sendAdvance)
 		metaBuf = binary.AppendUvarint(metaBuf, len64(sendBuf))
 		if _, err := nc.Write(metaBuf); err != nil {
+			logrus.Error("failed write meta")
 			return
 		}
 		if _, err := nc.Write(sendBuf); err != nil {
+			logrus.Error("failed write buf")
 			return
 		}
 

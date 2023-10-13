@@ -282,9 +282,9 @@ func NewResumableSSHClientConn(nc net.Conn, connCtx context.Context, dial func(c
 				continue
 			}
 
-			logrus.Info("Connection resumed.")
-
+			logrus.Info("Attaching connection.")
 			detached = resumableConn.Attach(c)
+			logrus.Info("Connection attached.")
 			backoff = 0
 		}
 	}()
