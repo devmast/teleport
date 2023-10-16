@@ -159,12 +159,9 @@ func (r *ResumableSSHServer) HandleConnection(nc net.Conn) {
 
 func NewResumableSSHClientConn(nc net.Conn, connCtx context.Context, dial func(connCtx context.Context, addrPort string) (net.Conn, error)) (net.Conn, error) {
 	// we must send the first 8 bytes of the version string; thankfully, no
-	// matter which SSH client we'll end up using, the handshake will almost
-	// always start with `SSH-2.0-`
-	//
-	// TODO(espadolini): we could read the handshake from the client side first,
-	// to be able to handle (without resumption support) handshakes like
-	// `SSH-2.0\r\n` which is technically valid
+	// matter which SSH client we'll end up using, it must send `SSH-2.0-` as
+	// its first 8 bytes, as per RFC 4253 ("The Secure Shell (SSH) Transport
+	// Layer Protocol") section 4.2.
 	if _, err := nc.Write([]byte(sshPrefix)); err != nil {
 		nc.Close()
 		return nil, trace.Wrap(err)
