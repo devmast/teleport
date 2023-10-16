@@ -28,9 +28,10 @@ import (
 )
 
 const (
-	bufferSize   = 16 * 1024 * 1024
+	readBufferSize  = 128 * 1024
+	writeBufferSize = 2 * 1024 * 1024
+
 	maxFrameSize = 128 * 1024
-	minAdvance   = 16 * 1024
 )
 
 func NewConn(localAddr, remoteAddr net.Addr) *Conn {
@@ -58,16 +59,13 @@ type Conn struct {
 	// receiveEnd is the absolute position of the end of receiveBuffer.
 	receiveEnd uint64
 	// receiveBuffer is the data that was received by the peer but not read by
-	// the application. Invariants:
-	//   len(receiveBuffer) <= bufferSize
-	//   receiveEnd - len(receiveBuffer) >= 0
+	// the application. Its size should not exceed readBufferSize
 	receiveBuffer []byte
 
 	// replayStart is the absolute position of the beginning of replayBuffer.
 	replayStart uint64
 	// replayBuffer is the data that was written by the application but not yet
-	// acknowledged by the peer. Invariants:
-	//   len(replayBuffer) <= bufferSize
+	// acknowledged by the peer. Its size should not exceed writeBufferSize.
 	replayBuffer []byte
 }
 
@@ -192,78 +190,69 @@ func (c *Conn) run(nc net.Conn) {
 	defer nc.Close()
 
 	c.mu.Lock()
-	handshake := binary.AppendUvarint(nil, c.receiveEnd)
-	handshake = binary.AppendUvarint(handshake, bufferSize-len64(c.receiveBuffer))
-	sentReceiveStart := c.receiveEnd - len64(c.receiveBuffer)
+	sentReceivePosition := c.receiveEnd
 	c.mu.Unlock()
 
 	ncR := bufio.NewReader(nc)
 
-	if _, err := nc.Write(handshake); err != nil {
+	if _, err := nc.Write(binary.AppendUvarint(nil, sentReceivePosition)); err != nil {
 		logrus.Error("failed handshake write")
 		return
 	}
 
-	remoteReplayStart, err := binary.ReadUvarint(ncR)
+	peerReceivePosition, err := binary.ReadUvarint(ncR)
 	if err != nil {
-		logrus.Error("failed readuvarint 1")
-		return
-	}
-	remoteWindowSize, err := binary.ReadUvarint(ncR)
-	if err != nil {
-		logrus.Error("failed readuvarint 2")
+		logrus.Error("failed readuvarint replaystart")
 		return
 	}
 
 	c.mu.Lock()
-	if remoteReplayStart < c.replayStart || remoteReplayStart > c.replayStart+len64(c.replayBuffer) {
+	if peerReceivePosition < c.replayStart || peerReceivePosition > c.replayStart+len64(c.replayBuffer) {
 		// we advanced our replay buffer past the read point of the peer, or the
 		// read point of the peer is in the future - can't continue, either way
 		c.mu.Unlock()
 		logrus.Error("incompatible resume")
 		return
 	}
-	if c.replayStart != remoteReplayStart {
-		c.replayBuffer = c.replayBuffer[remoteReplayStart-c.replayStart:]
-		c.replayStart = remoteReplayStart
+	if c.replayStart != peerReceivePosition {
+		c.replayBuffer = c.replayBuffer[peerReceivePosition-c.replayStart:]
+		c.replayStart = peerReceivePosition
 		c.broadcastLocked()
 	}
 	c.mu.Unlock()
 
 	logrus.Error("handshake completed successfully")
 
-	// Invariants:
-	//   c.replayStart <= remoteReplayStart <= c.replayStart + len(c.replayBuffer)
-	//   0 <= c.receiveEnd - len(c.receiveBuffer) <= sentReceiveStart <= c.receiveEnd
-
 	readDone = make(chan time.Time)
+	writeDone := make(chan time.Time)
 	go func() {
 		defer close(readDone)
 
 		for {
-			advanceWindow, err := binary.ReadUvarint(ncR)
+			ack, err := binary.ReadUvarint(ncR)
 			if err != nil {
-				logrus.Error("failed readuvarint window")
+				logrus.Error("failed readuvarint ack")
 				return
 			}
 
-			c.mu.Lock()
-			// if advanceWindow == 0xffff_ffff_ffff_ffff {
-			// 	// explicit close
-			// }
-			if advanceWindow > 0 {
-				if advanceWindow > len64(c.replayBuffer) {
+			if ack > 0 {
+				// if ack == 0xffff_ffff_ffff_ffff {
+				// 	// explicit close
+				// }
+				c.mu.Lock()
+
+				if ack > len64(c.replayBuffer) {
 					// trying to move our cursor past the replay buffer?
 					c.mu.Unlock()
-					logrus.Error("window advance past end of replay buffer")
+					logrus.Error("ack past end of replay buffer")
 					return
 				}
-				remoteWindowSize += advanceWindow
-				c.replayBuffer = c.replayBuffer[advanceWindow:]
-				c.replayStart += advanceWindow
+				c.replayBuffer = c.replayBuffer[ack:]
+				c.replayStart += ack
 				c.broadcastLocked()
+
+				c.mu.Unlock()
 			}
-			c.mu.Unlock()
 
 			frameSize, err := binary.ReadUvarint(ncR)
 			if err != nil {
@@ -271,53 +260,59 @@ func (c *Conn) run(nc net.Conn) {
 				return
 			}
 
-			c.mu.Lock()
-			if frameSize == 0 {
-				c.mu.Unlock()
-				continue
-			}
-			if frameSize > bufferSize-len64(c.receiveBuffer) || frameSize > maxFrameSize {
-				c.mu.Unlock()
+			if frameSize > maxFrameSize {
 				logrus.Error("oversized frame")
 				return
 			}
-			c.receiveBuffer = slices.Grow(c.receiveBuffer, int(frameSize))
-			recvBuf := c.receiveBuffer[len(c.receiveBuffer) : len64(c.receiveBuffer)+frameSize]
-			c.mu.Unlock()
 
-			n, err := io.ReadFull(ncR, recvBuf)
-
-			if n > 0 {
-				c.mu.Lock()
-				c.receiveBuffer = append(c.receiveBuffer, recvBuf[:n]...)
-				c.receiveEnd += uint64(n)
-				c.broadcastLocked()
+			c.mu.Lock()
+			for frameSize > 0 {
+				for len(c.receiveBuffer) >= readBufferSize {
+					if shouldExit := c.waitLocked(writeDone); shouldExit {
+						c.mu.Unlock()
+						logrus.Error("writeDone")
+						return
+					}
+				}
+				receiveTailSize := min(readBufferSize-len(c.receiveBuffer), int(frameSize))
+				c.receiveBuffer = slices.Grow(c.receiveBuffer, receiveTailSize)
+				receiveTail := c.receiveBuffer[len(c.receiveBuffer) : len(c.receiveBuffer)+receiveTailSize]
 				c.mu.Unlock()
-			}
 
-			if err != nil {
-				logrus.Error("failed read frame")
-				return
+				n, err := io.ReadFull(ncR, receiveTail)
+
+				c.mu.Lock()
+				if n > 0 {
+					c.receiveBuffer = append(c.receiveBuffer, receiveTail[:n]...)
+					c.receiveEnd += uint64(n)
+					frameSize -= uint64(n)
+					c.broadcastLocked()
+				}
+
+				if err != nil {
+					c.mu.Unlock()
+					logrus.Error("failed read frame")
+					return
+				}
 			}
+			c.mu.Unlock()
 		}
 	}()
 
+	defer close(writeDone)
 	for {
+		var sendAck uint64
 		var sendBuf []byte
-		var sendAdvance uint64
 
 		c.mu.Lock()
 		for {
-			sendBuf, sendAdvance = nil, 0
-			if remoteWindowSize > 0 && c.replayStart+len64(c.replayBuffer) > remoteReplayStart {
-				sendBuf = c.replayBuffer[remoteReplayStart-c.replayStart:]
-				sendBuf = sendBuf[:min(remoteWindowSize, maxFrameSize, len64(sendBuf))]
+			sendBuf = nil
+			if c.replayStart+len64(c.replayBuffer) > peerReceivePosition {
+				sendBuf = c.replayBuffer[peerReceivePosition-c.replayStart:]
+				sendBuf = sendBuf[:min(len(sendBuf), maxFrameSize)]
 			}
-			receiveStart := c.receiveEnd - len64(c.receiveBuffer)
-			if receiveStart > sentReceiveStart {
-				sendAdvance = receiveStart - sentReceiveStart
-			}
-			if len(sendBuf) > 0 || sendAdvance > minAdvance || (remoteWindowSize == 0 && sendAdvance > 0) {
+			sendAck = c.receiveEnd - sentReceivePosition
+			if len(sendBuf) > 0 || sendAck > 0 {
 				break
 			}
 			if shouldExit := c.waitLocked(readDone); shouldExit {
@@ -328,7 +323,7 @@ func (c *Conn) run(nc net.Conn) {
 		}
 		c.mu.Unlock()
 
-		metaBuf := binary.AppendUvarint(nil, sendAdvance)
+		metaBuf := binary.AppendUvarint(nil, sendAck)
 		metaBuf = binary.AppendUvarint(metaBuf, len64(sendBuf))
 		if _, err := nc.Write(metaBuf); err != nil {
 			logrus.Error("failed write meta")
@@ -340,9 +335,8 @@ func (c *Conn) run(nc net.Conn) {
 		}
 
 		c.mu.Lock()
-		sentReceiveStart += sendAdvance
-		remoteReplayStart += len64(sendBuf)
-		remoteWindowSize -= len64(sendBuf)
+		sentReceivePosition += sendAck
+		peerReceivePosition += len64(sendBuf)
 		c.mu.Unlock()
 	}
 }
@@ -506,8 +500,8 @@ func (c *Conn) Write(b []byte) (n int, err error) {
 	}()
 
 	for {
-		if bufferSize > len(c.replayBuffer) {
-			s := min(bufferSize-len(c.replayBuffer), len(b))
+		if writeBufferSize > len(c.replayBuffer) {
+			s := min(writeBufferSize-len(c.replayBuffer), len(b))
 			c.replayBuffer = append(c.replayBuffer, b[:s]...)
 			b = b[s:]
 			n += s
