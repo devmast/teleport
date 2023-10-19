@@ -19,6 +19,7 @@ package multiplexer
 import (
 	"bufio"
 	"context"
+	"io"
 	"net"
 
 	"github.com/gravitational/trace"
@@ -37,6 +38,8 @@ type Conn struct {
 	reader    *bufio.Reader
 }
 
+var _ io.ByteReader = (*Conn)(nil)
+
 // NewConn returns a net.Conn wrapper that supports peeking into the connection.
 func NewConn(conn net.Conn) *Conn {
 	return &Conn{
@@ -53,6 +56,10 @@ func (c *Conn) NetConn() net.Conn {
 // Read reads from connection
 func (c *Conn) Read(p []byte) (int, error) {
 	return c.reader.Read(p)
+}
+
+func (c *Conn) ReadByte() (byte, error) {
+	return c.reader.ReadByte()
 }
 
 // LocalAddr returns local address of the connection
