@@ -37,7 +37,6 @@ const (
 	clientSuffix  = "\x00" + protocolString
 	clientPrelude = sshPrefix + clientSuffix
 
-	// ServerVersion = sshutils.SSHVersionPrefix + " resume-v0"
 	serverPrelude = protocolString + "\r\n"
 )
 
@@ -46,9 +45,9 @@ type connectionHandler interface {
 }
 
 func NewResumableSSHServer(sshServer connectionHandler, hostID string) *ResumableSSHServer {
-	hostIDBuf := make([]byte, 8+len(hostID))
-	binary.LittleEndian.PutUint64(hostIDBuf, uint64(len(hostID)))
-	copy(hostIDBuf[8:], hostID)
+	hostIDBuf := make([]byte, 0, 8+len(hostID))
+	hostIDBuf = binary.LittleEndian.AppendUint64(hostIDBuf, uint64(len(hostID)))
+	hostIDBuf = append(hostIDBuf, hostID...)
 
 	return &ResumableSSHServer{
 		sshServer: sshServer,
@@ -70,22 +69,38 @@ type ResumableSSHServer struct {
 
 var _ connectionHandler = (*ResumableSSHServer)(nil)
 
-func (r *ResumableSSHServer) HandleConnection(nc net.Conn) {
-	_, _ = nc.Write([]byte(serverPrelude))
-	conn := multiplexer.NewConn(nc)
+func multiplexerConn(nc net.Conn) *multiplexer.Conn {
+	if conn, ok := nc.(*multiplexer.Conn); ok {
+		return conn
+	}
+	return multiplexer.NewConn(nc)
+}
 
-	isResume, err := conn.ReadPrelude(clientPrelude)
-	if err != nil {
+func (r *ResumableSSHServer) HandleConnection(nc net.Conn) {
+	conn := multiplexerConn(nc)
+	if _, err := conn.Write([]byte(serverPrelude)); err != nil {
 		if !utils.IsOKNetworkError(err) {
-			r.log.WithError(err).Error("Error while handling connection.")
+			r.log.WithError(err).Error("Error while writing resumption prelude.")
 		}
 		conn.Close()
 		return
 	}
+
+	isResume, err := conn.ReadPrelude(clientPrelude)
+	if err != nil {
+		if !utils.IsOKNetworkError(err) {
+			r.log.WithError(err).Error("Error while reading resumption prelude.")
+		}
+		conn.Close()
+		return
+	}
+
 	if !isResume {
 		r.log.Info("Handling non-resumable connection.")
 		// the other party is not a resume-aware client, so we bail and give the
-		// connection to the underlying SSH server
+		// connection to the underlying SSH server; we have written a
+		// CRLF-terminated line and read nothing from the connection, so it's
+		// legal for a SSH server to take over the connection from here
 		r.sshServer.HandleConnection(conn)
 		return
 	}
@@ -109,17 +124,9 @@ func (r *ResumableSSHServer) HandleConnection(nc net.Conn) {
 		}
 		resumptionToken[0] |= 0x80
 
-		if _, err := conn.Write(resumptionToken[:]); err != nil {
+		if _, err := conn.Write(append(resumptionToken[:], r.hostIDBuf...)); err != nil {
 			if !utils.IsOKNetworkError(err) {
-				r.log.WithError(err).Error("Error while handling connection.")
-			}
-			conn.Close()
-			return
-		}
-
-		if _, err := conn.Write(r.hostIDBuf); err != nil {
-			if !utils.IsOKNetworkError(err) {
-				r.log.WithError(err).Error("Error while handling connection.")
+				r.log.WithError(err).Error("Error during resumption handshake.")
 			}
 			conn.Close()
 			return
@@ -131,7 +138,7 @@ func (r *ResumableSSHServer) HandleConnection(nc net.Conn) {
 		r.mu.Unlock()
 
 		go r.sshServer.HandleConnection(resumableConn)
-		<-resumableConn.Attach(conn)
+		<-resumableConn.Attach(conn, true)
 		return
 	}
 
@@ -154,7 +161,7 @@ func (r *ResumableSSHServer) HandleConnection(nc net.Conn) {
 
 	conn.Write([]byte("\x01"))
 	r.log.Info("ATTACHING CONNECTION")
-	<-resumableConn.Attach(conn)
+	<-resumableConn.Attach(conn, false)
 }
 
 func NewResumableSSHClientConn(nc net.Conn, connCtx context.Context, dial func(connCtx context.Context, addrPort string) (net.Conn, error)) (net.Conn, error) {
@@ -214,7 +221,7 @@ func NewResumableSSHClientConn(nc net.Conn, connCtx context.Context, dial func(c
 
 	resumableConn := NewConn(conn.LocalAddr(), conn.RemoteAddr())
 	resumableConn.AllowRoaming()
-	detached := resumableConn.Attach(conn)
+	detached := resumableConn.Attach(conn, true)
 
 	go func() {
 		reconnectTicker := time.NewTicker(30 * time.Second)
@@ -286,7 +293,7 @@ func NewResumableSSHClientConn(nc net.Conn, connCtx context.Context, dial func(c
 			}
 
 			logrus.Info("Attaching connection.")
-			detached = resumableConn.Attach(c)
+			detached = resumableConn.Attach(c, false)
 			logrus.Info("Connection attached.")
 			backoff = 0
 		}

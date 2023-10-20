@@ -16,15 +16,17 @@ package resume
 
 import (
 	"bufio"
+	"context"
 	"encoding/binary"
 	"io"
 	"net"
 	"os"
-	"slices"
 	"sync"
 	"time"
 
+	"github.com/gravitational/trace"
 	"github.com/sirupsen/logrus"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -38,6 +40,8 @@ func NewConn(localAddr, remoteAddr net.Addr) *Conn {
 	return &Conn{
 		localAddr:  localAddr,
 		remoteAddr: remoteAddr,
+		receive:    window{data: make([]byte, 4096)},
+		replay:     window{data: make([]byte, 4096)},
 	}
 }
 
@@ -53,20 +57,13 @@ type Conn struct {
 	// current is set iff the Conn is attached; it's cleared at the end of run()
 	current io.Closer
 
-	readDeadline  time.Time
-	writeDeadline time.Time
+	readTimeout  *bool
+	writeTimeout *bool
+	readTimer    *time.Timer
+	writeTimer   *time.Timer
 
-	// receiveEnd is the absolute position of the end of receiveBuffer.
-	receiveEnd uint64
-	// receiveBuffer is the data that was received by the peer but not read by
-	// the application. Its size should not exceed readBufferSize
-	receiveBuffer []byte
-
-	// replayStart is the absolute position of the beginning of replayBuffer.
-	replayStart uint64
-	// replayBuffer is the data that was written by the application but not yet
-	// acknowledged by the peer. Its size should not exceed writeBufferSize.
-	replayBuffer []byte
+	receive window
+	replay  window
 }
 
 var _ net.Conn = (*Conn)(nil)
@@ -94,6 +91,21 @@ func (c *Conn) waitLocked(timeoutC <-chan time.Time) (timeout bool) {
 	}
 }
 
+func (c *Conn) waitLockedContext(ctx context.Context) error {
+	if c.cond == nil {
+		c.cond = make(chan struct{})
+	}
+	cond := c.cond
+	c.mu.Unlock()
+	defer c.mu.Lock()
+	select {
+	case <-cond:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 func (c *Conn) AllowRoaming() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -116,19 +128,18 @@ func sameTCPSourceAddress(addr1, addr2 net.Addr) bool {
 	return t1.IP.Equal(t2.IP)
 }
 
-func (c *Conn) Attach(nc net.Conn) (detached chan struct{}) {
+func (c *Conn) Attach(nc net.Conn, new bool) (detached chan error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	detached = make(chan struct{})
+	detached = make(chan error, 1)
 
 	localAddr := nc.LocalAddr()
 	remoteAddr := nc.RemoteAddr()
 
 	if !c.allowRoaming && !sameTCPSourceAddress(c.remoteAddr, remoteAddr) {
-		logrus.Error("not same TCP source address")
 		nc.Close()
-		close(detached)
+		detached <- trace.AccessDenied("invalid TCP source address for resumable non-roaming connection")
 		return detached
 	}
 
@@ -137,7 +148,7 @@ func (c *Conn) Attach(nc net.Conn) (detached chan struct{}) {
 	if c.closed {
 		logrus.Error("actually closed")
 		nc.Close()
-		close(detached)
+		detached <- trace.ConnectionProblem(net.ErrClosed, "attaching to a closed resumable connection: %v", net.ErrClosed.Error())
 		return detached
 	}
 
@@ -147,8 +158,7 @@ func (c *Conn) Attach(nc net.Conn) (detached chan struct{}) {
 	c.current = nc
 	c.broadcastLocked()
 	go func() {
-		defer close(detached)
-		c.run(nc)
+		detached <- c.run(nc, new)
 	}()
 
 	return detached
@@ -173,14 +183,7 @@ func (c *Conn) Status() (closed, attached bool) {
 	return c.closed, c.current != nil
 }
 
-func (c *Conn) run(nc net.Conn) {
-	var readDone chan time.Time
-	defer func() {
-		if readDone != nil {
-			<-readDone
-		}
-	}()
-
+func (c *Conn) run(nc net.Conn, firstRun bool) error {
 	defer func() {
 		c.mu.Lock()
 		defer c.mu.Unlock()
@@ -189,50 +192,59 @@ func (c *Conn) run(nc net.Conn) {
 	}()
 	defer nc.Close()
 
+	// this will succeed if the conn is a [*multiplexer.Conn], for example
+	ncReader, ok := nc.(interface {
+		io.Reader
+		io.ByteReader
+	})
+	if !ok {
+		ncReader = bufio.NewReader(nc)
+	}
+
 	c.mu.Lock()
-	sentReceivePosition := c.receiveEnd
+	sentReceivePosition := c.receive.End()
 	c.mu.Unlock()
 
-	ncR := bufio.NewReader(nc)
+	var peerReceivePosition uint64
 
-	if _, err := nc.Write(binary.AppendUvarint(nil, sentReceivePosition)); err != nil {
-		logrus.Error("failed handshake write")
-		return
-	}
+	if !firstRun {
+		if _, err := nc.Write(binary.AppendUvarint(nil, sentReceivePosition)); err != nil {
+			return trace.ConnectionProblem(err, "writing position during handshake: %v", err)
+		}
 
-	peerReceivePosition, err := binary.ReadUvarint(ncR)
-	if err != nil {
-		logrus.Error("failed readuvarint replaystart")
-		return
-	}
+		var err error
+		peerReceivePosition, err = binary.ReadUvarint(ncReader)
+		if err != nil {
+			return trace.ConnectionProblem(err, "reading position during handshake: %v", err)
+		}
 
-	c.mu.Lock()
-	if peerReceivePosition < c.replayStart || peerReceivePosition > c.replayStart+len64(c.replayBuffer) {
-		// we advanced our replay buffer past the read point of the peer, or the
-		// read point of the peer is in the future - can't continue, either way
+		c.mu.Lock()
+		if peerReceivePosition < c.replay.Start() || peerReceivePosition > c.replay.End() {
+			// we advanced our replay buffer past the read point of the peer, or the
+			// read point of the peer is in the future - can't continue, either way
+			c.mu.Unlock()
+			return trace.BadParameter("incompatible resume position")
+		}
+		if c.replay.Start() != peerReceivePosition {
+			c.replay.Advance(peerReceivePosition - c.replay.Start())
+			c.broadcastLocked()
+		}
 		c.mu.Unlock()
-		logrus.Error("incompatible resume")
-		return
-	}
-	if c.replayStart != peerReceivePosition {
-		c.replayBuffer = c.replayBuffer[peerReceivePosition-c.replayStart:]
-		c.replayStart = peerReceivePosition
-		c.broadcastLocked()
-	}
-	c.mu.Unlock()
 
-	logrus.Error("handshake completed successfully")
+		logrus.Error("handshake completed successfully")
+	} else {
+		logrus.Error("first run, skipped handshake")
+	}
 
-	readDone = make(chan time.Time)
-	writeDone := make(chan time.Time)
-	go func() {
-		defer close(readDone)
+	eg, ctx := errgroup.WithContext(context.Background())
+
+	eg.Go(func() error {
+		defer nc.Close()
 
 		for {
-			ack, err := binary.ReadUvarint(ncR)
+			ack, err := binary.ReadUvarint(ncReader)
 			if err != nil {
-				logrus.Error("failed readuvarint ack")
-				return
+				return trace.ConnectionProblem(err, "failed reading ack: %v", err)
 			}
 
 			if ack > 0 {
@@ -241,104 +253,109 @@ func (c *Conn) run(nc net.Conn) {
 				// }
 				c.mu.Lock()
 
-				if ack > len64(c.replayBuffer) {
+				if replayLen := c.replay.Len(); ack > replayLen {
 					// trying to move our cursor past the replay buffer?
 					c.mu.Unlock()
-					logrus.Error("ack past end of replay buffer")
-					return
+					return trace.BadParameter("ack past end of replay buffer (got %v, len %v)", ack, replayLen)
 				}
-				c.replayBuffer = c.replayBuffer[ack:]
-				c.replayStart += ack
+				c.replay.Advance(ack)
 				c.broadcastLocked()
 
 				c.mu.Unlock()
 			}
 
-			frameSize, err := binary.ReadUvarint(ncR)
+			frameSize, err := binary.ReadUvarint(ncReader)
 			if err != nil {
-				logrus.Error("failed readuvarint framesize")
-				return
+				return trace.ConnectionProblem(err, "failed reading frame size: %v", err)
 			}
 
 			if frameSize > maxFrameSize {
-				logrus.Error("oversized frame")
-				return
+				return trace.BadParameter("oversized frame (got %v)", frameSize)
 			}
 
 			c.mu.Lock()
 			for frameSize > 0 {
-				for len(c.receiveBuffer) >= readBufferSize {
-					if shouldExit := c.waitLocked(writeDone); shouldExit {
+				for c.receive.Len() >= readBufferSize {
+					if err := c.waitLockedContext(ctx); err != nil {
 						c.mu.Unlock()
-						logrus.Error("writeDone")
-						return
+						return err
 					}
 				}
-				receiveTailSize := min(readBufferSize-len(c.receiveBuffer), int(frameSize))
-				c.receiveBuffer = slices.Grow(c.receiveBuffer, receiveTailSize)
-				receiveTail := c.receiveBuffer[len(c.receiveBuffer) : len(c.receiveBuffer)+receiveTailSize]
+
+				c.receive.Reserve(min(readBufferSize-c.receive.Len(), frameSize))
+				receiveTail, _ := c.receive.Free()
+				receiveTail = receiveTail[:min(frameSize, len64(receiveTail))]
 				c.mu.Unlock()
 
-				n, err := io.ReadFull(ncR, receiveTail)
+				n, err := io.ReadFull(ncReader, receiveTail)
 
 				c.mu.Lock()
 				if n > 0 {
-					c.receiveBuffer = append(c.receiveBuffer, receiveTail[:n]...)
-					c.receiveEnd += uint64(n)
+					c.receive.Append(receiveTail[:n])
 					frameSize -= uint64(n)
 					c.broadcastLocked()
 				}
 
 				if err != nil {
 					c.mu.Unlock()
-					logrus.Error("failed read frame")
-					return
+					return trace.ConnectionProblem(err, "reading frame: %v", err)
 				}
 			}
 			c.mu.Unlock()
 		}
-	}()
+	})
 
-	defer close(writeDone)
-	for {
-		var sendAck uint64
-		var sendBuf []byte
-
-		c.mu.Lock()
+	eg.Go(func() error {
+		defer nc.Close()
 		for {
-			sendBuf = nil
-			if c.replayStart+len64(c.replayBuffer) > peerReceivePosition {
-				sendBuf = c.replayBuffer[peerReceivePosition-c.replayStart:]
-				sendBuf = sendBuf[:min(len(sendBuf), maxFrameSize)]
-			}
-			sendAck = c.receiveEnd - sentReceivePosition
-			if len(sendBuf) > 0 || sendAck > 0 {
-				break
-			}
-			if shouldExit := c.waitLocked(readDone); shouldExit {
-				c.mu.Unlock()
-				logrus.Error("shouldExit")
-				return
-			}
-		}
-		c.mu.Unlock()
+			var sendAck uint64
+			var sendBuf []byte
 
-		metaBuf := binary.AppendUvarint(nil, sendAck)
-		metaBuf = binary.AppendUvarint(metaBuf, len64(sendBuf))
-		if _, err := nc.Write(metaBuf); err != nil {
-			logrus.Error("failed write meta")
-			return
-		}
-		if _, err := nc.Write(sendBuf); err != nil {
-			logrus.Error("failed write buf")
-			return
-		}
+			c.mu.Lock()
+			for {
+				sendBuf = nil
+				if c.replay.End() > peerReceivePosition {
+					skip := peerReceivePosition - c.replay.Start()
+					d1, d2 := c.replay.Data()
+					if len64(d1) <= skip {
+						sendBuf = d2[skip-len64(d1):]
+					} else {
+						sendBuf = d1[skip:]
+					}
+					if len(sendBuf) > maxFrameSize {
+						sendBuf = sendBuf[:maxFrameSize]
+					}
+				}
+				sendAck = c.receive.End() - sentReceivePosition
+				if len(sendBuf) > 0 || sendAck > 0 {
+					break
+				}
+				if err := c.waitLockedContext(ctx); err != nil {
+					c.mu.Unlock()
+					return err
+				}
+			}
+			c.mu.Unlock()
 
-		c.mu.Lock()
-		sentReceivePosition += sendAck
-		peerReceivePosition += len64(sendBuf)
-		c.mu.Unlock()
-	}
+			hdrBuf := binary.AppendUvarint(nil, sendAck)
+			hdrBuf = binary.AppendUvarint(hdrBuf, len64(sendBuf))
+			if _, err := nc.Write(hdrBuf); err != nil {
+				return trace.ConnectionProblem(err, "writing frame header: %v", err)
+			}
+			if _, err := nc.Write(sendBuf); err != nil {
+				return trace.ConnectionProblem(err, "writing frame data: %v", err)
+			}
+
+			c.mu.Lock()
+			sentReceivePosition += sendAck
+			peerReceivePosition += len64(sendBuf)
+			c.mu.Unlock()
+		}
+	})
+
+	err := eg.Wait()
+	logrus.Infof("Detaching connection: %v", err)
+	return trace.Wrap(err)
 }
 
 // Close implements [net.Conn].
@@ -396,9 +413,40 @@ func (c *Conn) SetDeadline(t time.Time) error {
 		return net.ErrClosed
 	}
 
-	c.readDeadline = t
-	c.writeDeadline = t
-	c.broadcastLocked()
+	c.readTimeout = nil
+	if c.readTimer != nil {
+		c.readTimer.Stop()
+		c.readTimer = nil
+	}
+
+	c.writeTimeout = nil
+	if c.writeTimer != nil {
+		c.writeTimer.Stop()
+		c.writeTimer = nil
+	}
+
+	if !t.IsZero() {
+		d := time.Until(t)
+
+		readTimeout := new(bool)
+		c.readTimeout = readTimeout
+		c.readTimer = time.AfterFunc(d, func() {
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			*readTimeout = true
+			c.broadcastLocked()
+		})
+
+		writeTimeout := new(bool)
+		c.writeTimeout = writeTimeout
+		c.writeTimer = time.AfterFunc(d, func() {
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			*writeTimeout = true
+			c.broadcastLocked()
+		})
+	}
+
 	return nil
 }
 
@@ -411,8 +459,25 @@ func (c *Conn) SetReadDeadline(t time.Time) error {
 		return net.ErrClosed
 	}
 
-	c.readDeadline = t
-	c.broadcastLocked()
+	c.readTimeout = nil
+	if c.readTimer != nil {
+		c.readTimer.Stop()
+		c.readTimer = nil
+	}
+
+	if !t.IsZero() {
+		d := time.Until(t)
+
+		readTimeout := new(bool)
+		c.readTimeout = readTimeout
+		c.readTimer = time.AfterFunc(d, func() {
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			*readTimeout = true
+			c.broadcastLocked()
+		})
+	}
+
 	return nil
 }
 
@@ -425,8 +490,25 @@ func (c *Conn) SetWriteDeadline(t time.Time) error {
 		return net.ErrClosed
 	}
 
-	c.writeDeadline = t
-	c.broadcastLocked()
+	c.writeTimeout = nil
+	if c.writeTimer != nil {
+		c.writeTimer.Stop()
+		c.writeTimer = nil
+	}
+
+	if !t.IsZero() {
+		d := time.Until(t)
+
+		writeTimeout := new(bool)
+		c.writeTimeout = writeTimeout
+		c.writeTimer = time.AfterFunc(d, func() {
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			*writeTimeout = true
+			c.broadcastLocked()
+		})
+	}
+
 	return nil
 }
 
@@ -435,43 +517,31 @@ func (c *Conn) Read(b []byte) (n int, err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if c.closed {
-		return 0, net.ErrClosed
-	}
-
-	if !c.readDeadline.IsZero() && time.Now().After(c.readDeadline) {
-		return 0, os.ErrDeadlineExceeded
-	}
-
-	if len(b) == 0 {
-		return 0, nil
-	}
-
-	var deadlineT *time.Timer
-	defer func() {
-		if deadlineT != nil {
-			deadlineT.Stop()
-		}
-	}()
-
 	for {
-		if len(c.receiveBuffer) > 0 {
-			n := copy(b, c.receiveBuffer)
-			c.receiveBuffer = c.receiveBuffer[n:]
+		if c.closed {
+			return 0, net.ErrClosed
+		}
+
+		if c.readTimeout != nil && *c.readTimeout {
+			return 0, os.ErrDeadlineExceeded
+		}
+
+		if len(b) == 0 {
+			return 0, nil
+		}
+
+		if c.receive.Len() > 0 {
+			d1, d2 := c.receive.Data()
+			n := copy(b, d1)
+			if len(b) > n {
+				n += copy(b[n:], d2)
+			}
+			c.receive.Advance(uint64(n))
 			c.broadcastLocked()
 			return n, nil
 		}
 
-		var deadlineC <-chan time.Time
-		deadlineT, deadlineC = deadlineTimer(c.readDeadline, deadlineT)
-
-		if timeout := c.waitLocked(deadlineC); timeout {
-			return 0, os.ErrDeadlineExceeded
-		}
-
-		if c.closed {
-			return 0, net.ErrClosed
-		}
+		c.waitLocked(nil)
 	}
 }
 
@@ -484,7 +554,7 @@ func (c *Conn) Write(b []byte) (n int, err error) {
 		return 0, net.ErrClosed
 	}
 
-	if !c.writeDeadline.IsZero() && time.Now().After(c.writeDeadline) {
+	if c.writeTimeout != nil && *c.writeTimeout {
 		return 0, os.ErrDeadlineExceeded
 	}
 
@@ -492,39 +562,106 @@ func (c *Conn) Write(b []byte) (n int, err error) {
 		return 0, nil
 	}
 
-	var deadlineT *time.Timer
-	defer func() {
-		if deadlineT != nil {
-			deadlineT.Stop()
-		}
-	}()
-
 	for {
-		if writeBufferSize > len(c.replayBuffer) {
-			s := min(writeBufferSize-len(c.replayBuffer), len(b))
-			c.replayBuffer = append(c.replayBuffer, b[:s]...)
+		if c.replay.Len() < writeBufferSize {
+			s := min(writeBufferSize-c.replay.Len(), len64(b))
+			c.replay.Append(b[:s])
 			b = b[s:]
-			n += s
+			n += int(s)
 			c.broadcastLocked()
+
+			if len(b) == 0 {
+				return n, nil
+			}
 		}
 
-		if len(b) == 0 {
-			return n, nil
-		}
-
-		var deadlineC <-chan time.Time
-		deadlineT, deadlineC = deadlineTimer(c.writeDeadline, deadlineT)
-
-		if timeout := c.waitLocked(deadlineC); timeout {
-			return n, os.ErrDeadlineExceeded
-		}
+		c.waitLocked(nil)
 
 		if c.closed {
 			return n, net.ErrClosed
+		}
+
+		if c.writeTimeout != nil && *c.writeTimeout {
+			return 0, os.ErrDeadlineExceeded
 		}
 	}
 }
 
 func len64(s []byte) uint64 {
 	return uint64(len(s))
+}
+
+type window struct {
+	data  []byte
+	start uint64
+	len   uint64
+}
+
+func (w *window) bounds() (capacity, left, right uint64) {
+	capacity = len64(w.data)
+	left = w.start % capacity
+	right = left + w.len
+	return
+}
+
+func (w *window) Start() uint64 {
+	return w.start
+}
+
+func (w *window) Len() uint64 {
+	return w.len
+}
+
+func (w *window) End() uint64 {
+	return w.start + w.len
+}
+
+func (w *window) Data() ([]byte, []byte) {
+	c, l, r := w.bounds()
+
+	if r > c {
+		return w.data[l:], w.data[:r-c]
+	}
+	return w.data[l:r], nil
+}
+
+func (w *window) Free() ([]byte, []byte) {
+	c, l, r := w.bounds()
+
+	if r > c {
+		return w.data[r-c : l], nil
+	}
+	return w.data[r:], w.data[:l]
+}
+
+func (w *window) Reserve(n uint64) {
+	if w.len+n <= len64(w.data) {
+		return
+	}
+
+	d1, d2 := w.Data()
+	c := len64(w.data) * 2
+	for w.len+n > c {
+		c *= 2
+	}
+	w.data = make([]byte, c)
+	l := w.start % c
+	copy(w.data[l:], d1)
+	m := l + len64(d1)
+	if m > c {
+		m -= c
+	}
+	copy(w.data[m:], d2)
+}
+
+func (w *window) Append(b []byte) {
+	w.Reserve(len64(b))
+	f1, f2 := w.Free()
+	copy(f2, b[copy(f1, b):])
+	w.len += len64(b)
+}
+
+func (w *window) Advance(n uint64) {
+	w.start += n
+	w.len -= min(n, w.len)
 }
