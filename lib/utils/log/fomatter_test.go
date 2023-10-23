@@ -36,6 +36,14 @@ func TestOutput(t *testing.T) {
 	err := errors.New("you can't do that")
 	addr := utils.NetAddr{Addr: "127.0.0.1:1234", AddrNetwork: "tcp"}
 
+	fields := logrus.Fields{
+		"local":        &addr,
+		"remote":       &addr,
+		"login":        "llama",
+		"teleportUser": "user",
+		"id":           1234,
+	}
+
 	t.Run("text", func(t *testing.T) {
 		var logrusOutput bytes.Buffer
 		formatter := NewDefaultTextFormatter(true)
@@ -47,12 +55,12 @@ func TestOutput(t *testing.T) {
 
 		entry := logger.WithField(trace.Component, "test")
 		l := entry.WithField("test", 123).WithField("animal", "llama\n").WithField("error", err)
-		l.WithField("diag_addr", &addr).Info("Adding diagnostic debugging handlers.\t To connect with profiler, use `go tool pprof diag_addr`.")
+		l.WithField("diag_addr", &addr).WithField(trace.ComponentFields, fields).Info("Adding diagnostic debugging handlers.\t To connect with profiler, use `go tool pprof diag_addr`.")
 
 		var slogOutput bytes.Buffer
 		slogLogger := slog.New(NewSLogTextHandler(&slogOutput, slog.LevelDebug, true)).With(trace.Component, "test")
 		l2 := slogLogger.With("test", 123).With("animal", "llama\n").With("error", err)
-		l2.Info("Adding diagnostic debugging handlers.\t To connect with profiler, use `go tool pprof diag_addr`.", "diag_addr", &addr)
+		l2.With(trace.ComponentFields, fields).Info("Adding diagnostic debugging handlers.\t To connect with profiler, use `go tool pprof diag_addr`.", "diag_addr", &addr)
 
 		require.Equal(t, logrusOutput.String(), slogOutput.String())
 	})
@@ -113,6 +121,14 @@ func BenchmarkFormatter(b *testing.B) {
 	//err := trace.AccessDenied("the quick brown fox jumped really high")
 	addr := utils.NetAddr{Addr: "127.0.0.1:1234", AddrNetwork: "tcp"}
 
+	fields := logrus.Fields{
+		"local":        addr,
+		"remote":       addr,
+		"login":        "llama",
+		"teleportUser": "user",
+		"id":           1234,
+	}
+
 	b.ResetTimer()
 	b.Run("logrus", func(b *testing.B) {
 		b.Run("text_old_formatter", func(b *testing.B) {
@@ -127,7 +143,7 @@ func BenchmarkFormatter(b *testing.B) {
 			entry := logger.WithField(trace.Component, "test")
 			for i := 0; i < b.N; i++ {
 				l := entry.WithField("test", 123).WithField("animal", "llama\n").WithField("error", err)
-				l.WithField("diag_addr", &addr).Info("Adding diagnostic debugging handlers. To connect with profiler, use `go tool pprof diag_addr`\n.")
+				l.WithField("diag_addr", &addr).WithField(trace.ComponentFields, fields).Info("Adding diagnostic debugging handlers. To connect with profiler, use `go tool pprof diag_addr`\n.")
 			}
 		})
 
@@ -143,7 +159,7 @@ func BenchmarkFormatter(b *testing.B) {
 			entry := logger.WithField(trace.Component, "test")
 			for i := 0; i < b.N; i++ {
 				l := entry.WithField("test", 123).WithField("animal", "llama\n").WithField("error", err)
-				l.WithField("diag_addr", &addr).Info("Adding diagnostic debugging handlers. To connect with profiler, use `go tool pprof diag_addr`\n.")
+				l.WithField("diag_addr", &addr).WithField(trace.ComponentFields, fields).Info("Adding diagnostic debugging handlers. To connect with profiler, use `go tool pprof diag_addr`\n.")
 			}
 		})
 
@@ -159,7 +175,7 @@ func BenchmarkFormatter(b *testing.B) {
 			entry := logger.WithField(trace.Component, "test")
 			for i := 0; i < b.N; i++ {
 				l := entry.WithField("test", 123).WithField("animal", "llama\n").WithField("error", err)
-				l.WithField("diag_addr", &addr).Info("Adding diagnostic debugging handlers. To connect with profiler, use `go tool pprof diag_addr`\n.")
+				l.WithField("diag_addr", &addr).WithField(trace.ComponentFields, fields).Info("Adding diagnostic debugging handlers. To connect with profiler, use `go tool pprof diag_addr`\n.")
 			}
 		})
 
@@ -175,7 +191,7 @@ func BenchmarkFormatter(b *testing.B) {
 			entry := logger.WithField(trace.Component, "test")
 			for i := 0; i < b.N; i++ {
 				l := entry.WithField("test", 123).WithField("animal", "llama\n").WithField("error", err)
-				l.WithField("diag_addr", &addr).Info("Adding diagnostic debugging handlers. To connect with profiler, use `go tool pprof diag_addr`\n.")
+				l.WithField("diag_addr", &addr).WithField(trace.ComponentFields, fields).Info("Adding diagnostic debugging handlers. To connect with profiler, use `go tool pprof diag_addr`\n.")
 			}
 		})
 	})
@@ -191,7 +207,7 @@ func BenchmarkFormatter(b *testing.B) {
 
 			for i := 0; i < b.N; i++ {
 				l := logger.With("test", 123).With("animal", "llama\n").With("error", err)
-				l.Info("Adding diagnostic debugging handlers. To connect with profiler, use `go tool pprof diag_addr`\n.", "diag_addr", &addr)
+				l.With(trace.ComponentFields, fields).Info("Adding diagnostic debugging handlers. To connect with profiler, use `go tool pprof diag_addr`\n.", "diag_addr", &addr)
 			}
 		})
 
@@ -201,7 +217,7 @@ func BenchmarkFormatter(b *testing.B) {
 
 			for i := 0; i < b.N; i++ {
 				l := logger.With("test", 123).With("animal", "llama\n").With("error", err)
-				l.Info("Adding diagnostic debugging handlers. To connect with profiler, use `go tool pprof diag_addr`\n.", "diag_addr", &addr)
+				l.With(trace.ComponentFields, fields).Info("Adding diagnostic debugging handlers. To connect with profiler, use `go tool pprof diag_addr`\n.", "diag_addr", &addr)
 			}
 		})
 
@@ -215,7 +231,7 @@ func BenchmarkFormatter(b *testing.B) {
 
 			for i := 0; i < b.N; i++ {
 				l := logger.With("test", 123).With("animal", "llama\n").With("error", err)
-				l.Info("Adding diagnostic debugging handlers. To connect with profiler, use `go tool pprof diag_addr`\n.", "diag_addr", &addr)
+				l.With(trace.ComponentFields, fields).Info("Adding diagnostic debugging handlers. To connect with profiler, use `go tool pprof diag_addr`\n.", "diag_addr", &addr)
 			}
 		})
 
@@ -225,7 +241,7 @@ func BenchmarkFormatter(b *testing.B) {
 
 			for i := 0; i < b.N; i++ {
 				l := logger.With("test", 123).With("animal", "llama\n").With("error", err)
-				l.Info("Adding diagnostic debugging handlers. To connect with profiler, use `go tool pprof diag_addr`\n.", "diag_addr", &addr)
+				l.With(trace.ComponentFields, fields).Info("Adding diagnostic debugging handlers. To connect with profiler, use `go tool pprof diag_addr`\n.", "diag_addr", &addr)
 			}
 		})
 	})

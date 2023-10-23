@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/gravitational/trace"
+	"github.com/sirupsen/logrus"
 )
 
 type SlogTextHandler struct {
@@ -216,39 +217,6 @@ func (s *SlogTextHandler) Handle(ctx context.Context, r slog.Record) error {
 	return err
 }
 
-// groupOrAttrs holds either a group name or a list of slog.Attrs.
-type groupOrAttrs struct {
-	group string      // group name if non-empty
-	attrs []slog.Attr // attrs if non-empty
-}
-
-//
-//func (s *SlogTextHandler) withGroupOrAttrs(goa groupOrAttrs) *SlogTextHandler {
-//	s2 := *s
-//	s2.goas = make([]groupOrAttrs, len(s.goas)+1)
-//	copy(s2.goas, s.goas)
-//
-//	idx := slices.IndexFunc(goa.attrs, func(attr slog.Attr) bool {
-//		return attr.Key == trace.Component
-//	})
-//
-//	component := s.component
-//	if idx >= 0 {
-//		const padding = trace.DefaultComponentPadding
-//		component = fmt.Sprintf("[%v]", goa.attrs[idx].Value.String())
-//		component = strings.ToUpper(padMax(component, padding))
-//		if component[len(component)-1] != ' ' {
-//			component = component[:len(component)-1] + "]"
-//		}
-//
-//		goa.attrs = goa.attrs[:idx+copy(goa.attrs[idx:], goa.attrs[idx+1:])]
-//	}
-//
-//	s2.goas[len(s2.goas)-1] = goa
-//	s2.component = component
-//	return &s2
-//}
-
 func (s *SlogTextHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	if len(attrs) == 0 {
 		return s
@@ -265,17 +233,28 @@ func (s *SlogTextHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 
 	// Pre-format the attributes.
 	for _, a := range attrs {
-		if a.Key == trace.Component {
+		switch a.Key {
+		case trace.Component:
 			const padding = trace.DefaultComponentPadding
 			component = fmt.Sprintf("[%v]", a.Value.String())
 			component = strings.ToUpper(padMax(component, padding))
 			if component[len(component)-1] != ' ' {
 				component = component[:len(component)-1] + "]"
 			}
-			continue
+		case trace.ComponentFields:
+			switch fields := a.Value.Any().(type) {
+			case map[string]any:
+				for k, v := range fields {
+					s2.appendAttr(s2.preformatted, slog.Any(k, v))
+				}
+			case logrus.Fields:
+				for k, v := range fields {
+					s2.preformatted = s2.appendAttr(s2.preformatted, slog.Any(k, v))
+				}
+			}
+		default:
+			s2.preformatted = s2.appendAttr(s2.preformatted, a)
 		}
-
-		s2.preformatted = s2.appendAttr(s2.preformatted, a)
 	}
 	s2.component = component
 	return &s2
