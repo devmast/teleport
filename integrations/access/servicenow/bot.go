@@ -43,7 +43,7 @@ func (b *Bot) CheckHealth(ctx context.Context) error {
 }
 
 // Broadcast creates a ServiceNow incident.
-func (b *Bot) Broadcast(ctx context.Context, recipients []common.Recipient, reqID string, reqData pd.AccessRequestData) (data common.SentMessages, err error) {
+func (b *Bot) Broadcast(ctx context.Context, _ []common.Recipient, reqID string, reqData pd.AccessRequestData) (data common.SentMessages, err error) {
 	serviceNowReqData := RequestData{
 		User:               reqData.User,
 		Roles:              reqData.Roles,

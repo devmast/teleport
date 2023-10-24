@@ -243,7 +243,7 @@ func (a *BaseApp) onPendingRequest(ctx context.Context, req types.AccessRequest)
 
 	reqID := req.GetName()
 
-	resourceNames, err := a.getResourceNames(ctx, req)
+	resourceNames, err := a.GetResourceNames(ctx, req)
 	if err != nil {
 		return trace.Wrap(err)
 	}
@@ -488,7 +488,8 @@ func (a *BaseApp) updateMessages(ctx context.Context, reqID string, tag pd.Resol
 	return nil
 }
 
-func (a *BaseApp) getResourceNames(ctx context.Context, req types.AccessRequest) ([]string, error) {
+// GetResourceNames returns user friendly names of the resource IDs in an access request.
+func (a *BaseApp) GetResourceNames(ctx context.Context, req types.AccessRequest) ([]string, error) {
 	resourceNames := make([]string, 0, len(req.GetRequestedResourceIDs()))
 	resourcesByCluster := accessrequest.GetResourceIDsByCluster(req)
 
