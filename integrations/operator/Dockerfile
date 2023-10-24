@@ -21,21 +21,38 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libc6-dev-i386-cross \
     gcc-i686-linux-gnu
 
+# Create a basic Makefile in /tmp/v from build.assets/versions.mk to print
+# the program versions we need.
+RUN mkdir -p /tmp/v
+COPY build.assets/versions.mk /tmp/v
+COPY <<-EOT /tmp/v/Makefile
+  include versions.mk
+  print-go-version:; @echo $(GOLANG_VERSION)
+  print-protoc-version:; @echo $(PROTOC_VERSION)
+EOT
+
 # Install Go.
-ARG GOLANG_VERSION
-RUN mkdir -p /opt && cd /opt && curl -fsSL https://storage.googleapis.com/golang/$GOLANG_VERSION.linux-${BUILDARCH}.tar.gz | tar xz && \
+RUN GOLANG_VERSION=$(make -s -C /tmp/v print-go-version) && \
+    mkdir -p /opt && \
+    curl -fsSL https://storage.googleapis.com/golang/$GOLANG_VERSION.linux-${BUILDARCH}.tar.gz | \
+      tar xz -C /opt && \
     chmod a+w /var/lib && \
     chmod a-w /
+
 ENV GOPATH="/go" \
     GOROOT="/opt/go" \
     PATH="$PATH:/opt/go/bin:/go/bin"
 
 # Install protoc.
-ARG PROTOC_VERSION # eg, "3.20.2"
-RUN VERSION="$PROTOC_VERSION" && \
+RUN PROTOC_VERSION=$(make -s -C /tmp/v print-protoc-version) && \
   PB_REL='https://github.com/protocolbuffers/protobuf/releases' && \
   PB_FILE="$(mktemp protoc-XXXXXX.zip)" && \
-  curl -fsSL -o "$PB_FILE" "$PB_REL/download/v$VERSION/protoc-$VERSION-linux-$(if [ "$BUILDARCH" = "amd64" ]; then echo "x86_64"; else echo "aarch_64"; fi).zip"  && \
+  case "$BUILDARCH" in \
+    amd64) PROTOC_ARCH=x86_64 ;; \
+    arm64) PROTOC_ARCH=aarch_64 ;; \
+    *) printf 'Unknown $BUILDARCH (%s). Cannot determine protoc host arch\n' "$BUILDARCH"; exit 1 ;; \
+  esac && \
+  curl -fsSL -o "$PB_FILE" "$PB_REL/download/v$PROTOC_VERSION/protoc-$PROTOC_VERSION-linux-$PROTOC_ARCH.zip" && \
   unzip "$PB_FILE" -d /usr/local && \
   rm -f "$PB_FILE"
 
@@ -64,16 +81,18 @@ COPY integrations/operator/sidecar/ integrations/operator/sidecar/
 COPY integrations/operator/main.go integrations/operator/main.go
 COPY integrations/operator/namespace.go integrations/operator/namespace.go
 
-# Compiler package should use host-triplet-agnostic name (i.e. "x86-64-linux-gnu-gcc" instead of "gcc")
-#  in most cases, to avoid issues on systems with multiple versions of gcc (i.e. buildboxes)
-# TARGETOS and TARGETARCH are provided by Docker/buildx, but must be explicitly listed here
-ARG COMPILER_NAME
 ARG TARGETOS
 ARG TARGETARCH
 
 # Build the program
 # CGO is required for github.com/gravitational/teleport/lib/system
-RUN echo "Targeting $TARGETOS/$TARGETARCH with CC=$COMPILER_NAME" && \
+RUN case "$TARGETARCH" in \
+      amd64) COMPILER_NAME=x86_64-linux-gnu-gcc ;; \
+      arm64) COMPILER_NAME=aarch64-linux-gnu-gcc ;; \
+      arm)   COMPILER_NAME=arm-linux-gnueabihf-gcc ;; \
+      *) printf 'Unknown $TARGETARCH (%s). Cannot determine C compiler\n' "$TARGETARCH"; exit 1 ;; \
+    esac; \
+    echo "Targeting $TARGETOS/$TARGETARCH with CC=$COMPILER_NAME" && \
     CGO_ENABLED=1 CC=$COMPILER_NAME GOOS=$TARGETOS GOARCH=$TARGETARCH \
     go build -a -o /go/bin/teleport-operator github.com/gravitational/teleport/integrations/operator
 
