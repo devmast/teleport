@@ -1,0 +1,40 @@
+---
+title: Upgrading the Auth Service and Proxy Service on Kubernetes
+description: Explains how to upgrade the Teleport Auth Service and Proxy Service when self-hosting Teleport on Kubernetes
+---
+
+This guide explains how to upgrade Teleport Auth Service and Proxy Service
+instances running on Kubernetes.
+
+{/*TODO: More context, e.g., what to do re: agents*/}
+
+## Prerequisites
+
+- A Teleport cluster deployed with the `teleport-cluster` Helm chart.
+{/*TODO: Add a chart link*/}
+
+## Upgrade the Auth Service and Proxy Service
+
+{/*TODO: intro paragraph*/}
+
+{/*TODO: Are there any other steps, e.g., having one instance of the Auth
+Service? Look at the existing guides*/}
+
+Run the following commands to upgrade Auth Service and Proxy Service instances
+running on Kubernetes.
+
+1. Update the Teleport Helm chart repository so you can install the latest
+   version of the `teleport-cluster` chart:
+
+  (!docs/pages//kubernetes-access/helm/includes/helm-repo-add.mdx!)
+
+1. Upgrade the Helm release. This command assumes you are configuring your
+   cluster with a values file called `values.yaml`:
+
+  ```code
+  helm upgrade --version=(=teleport.version=) --values=values.yaml
+  ```
+
+The `teleport-cluster` Helm chart automatically waits for the previous version
+of the Proxy Service to stop responding to requests before running a new version
+of the Auth Service.
