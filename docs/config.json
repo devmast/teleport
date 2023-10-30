@@ -16,6 +16,41 @@
           "title": "Installation",
           "slug": "/installation/"
         },
+	{
+	  "title": "Upgrading",
+	  "slug": "/upgrading/",
+	  "entries": [
+	    {
+	      "title": "Teleport Cluster (Linux)",
+	      "slug": "/upgrading/auth-proxy-linux/",
+	      "forScopes": ["oss", "enterprise"]
+	    },
+	    {
+	      "title": "Teleport Cluster (Kubernetes)",
+	      "slug": "/upgrading/auth-proxy-helm/",
+	      "forScopes": ["oss", "enterprise"]
+	    },
+	    {
+	      "title": "Teleport Agents (Linux)",
+	      "slug": "/upgrading/agents-linux/"
+	    },
+	    {
+	      "title": "Teleport Agents (Kubernetes)",
+	      "slug": "/upgrading/agents-helm/"
+	    },
+            {
+              "title": "Self-Hosted Automatic Upgrades",
+              "slug": "/management/operations/self-hosted-automatic-agent-updates/",
+              "forScopes": ["enterprise"]
+            },
+            {
+              "title": "Enroll Agents in Automatic Upgrades",
+              "slug": "/management/operations/enroll-agent-into-automatic-updates/",
+              "forScopes": ["enterprise", "cloud"]
+            }
+
+	  ]
+	},
         {
           "title": "FAQ",
           "slug": "/faq/"
@@ -2978,6 +3013,16 @@
     {
       "source": "/machine-id/guides/github-actions/",
       "destination": "/machine-id/deployment/github-actions/",
+      "permanent": true
+    },
+    {
+      "source": "/management/operations/enroll-agent-into-automatic-updates/",
+      "destination": "/upgrading/enroll-agent-into-automatic-updates/",
+      "permanent": true
+    },
+    {
+      "source": "/management/operations/self-hosted-automatic-agent-updates/",
+      "destination": "/upgrading/self-hosted-automatic-agent-updates/",
       "permanent": true
     }
   ]
