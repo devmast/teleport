@@ -18,7 +18,7 @@ instances running on Kubernetes.
 This guide assumes that you have configured the `teleport-cluster` Helm chart
 with a values file called `values.yaml`. 
 
-## Edit your `teleport-cluster` values file
+## Step 1/2. Edit your `teleport-cluster` values file
 
 You must reduce the number of Auth Service instances to one in order to ensure a
 consistent cluster state and enable the Auth Service to perform any data
@@ -36,7 +36,7 @@ auth
  Once the upgrade is finished, you can configure your cluster for high
  availability again.
 
-## Upgrade your `teleport-cluster` Helm release
+## Step 2/2. Upgrade your `teleport-cluster` Helm release
 
 Run the following commands to upgrade Auth Service and Proxy Service instances
 running on Kubernetes.
