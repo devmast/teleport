@@ -91,7 +91,7 @@ func NewDefaultTextFormatter(enableColors bool) *TextFormatter {
 	return &TextFormatter{
 		ComponentPadding: trace.DefaultComponentPadding,
 		FormatCaller:     formatCallerWithPathAndLine,
-		ExtraFields:      KnownFormatFields.names(),
+		ExtraFields:      knownFormatFieldNames,
 		EnableColors:     enableColors,
 		callerEnabled:    true,
 		timestampEnabled: false,
@@ -111,7 +111,7 @@ func (tf *TextFormatter) CheckAndSetDefaults() error {
 	if tf.ExtraFields == nil {
 		tf.timestampEnabled = true
 		tf.callerEnabled = true
-		tf.ExtraFields = KnownFormatFields.names()
+		tf.ExtraFields = knownFormatFieldNames
 		return nil
 	}
 	// parse input
@@ -143,8 +143,9 @@ func (tf *TextFormatter) Format(e *log.Entry) ([]byte, error) {
 		writeTimeRFC3339(w.b, e.Time)
 	}
 
-	for _, match := range tf.ExtraFields {
-		switch match {
+	var wroteLevel bool
+	for _, field := range tf.ExtraFields {
+		switch field {
 		case "level":
 			var color int
 			var level string
@@ -176,6 +177,7 @@ func (tf *TextFormatter) Format(e *log.Entry) ([]byte, error) {
 				color = noColor
 			}
 
+			wroteLevel = true
 			w.writeField(padMax(level, trace.DefaultLevelPadding), color)
 		case "component":
 			padding := trace.DefaultComponentPadding
@@ -193,10 +195,15 @@ func (tf *TextFormatter) Format(e *log.Entry) ([]byte, error) {
 			if component[len(component)-1] != ' ' {
 				component = component[:len(component)-1] + "]"
 			}
+
+			if !wroteLevel {
+				wroteLevel = true
+			}
+
 			w.WriteString(component)
 		default:
-			if !KnownFormatFields.has(match) {
-				return nil, trace.BadParameter("invalid log format key: %v", match)
+			if _, ok := knownFormatFields[field]; !ok {
+				return nil, trace.BadParameter("invalid log format key: %v", field)
 			}
 		}
 	}
@@ -234,7 +241,7 @@ type JSONFormatter struct {
 func (j *JSONFormatter) CheckAndSetDefaults() error {
 	// set log formatting
 	if j.ExtraFields == nil {
-		j.ExtraFields = KnownFormatFields.names()
+		j.ExtraFields = knownFormatFieldNames
 	}
 
 	// parse input
@@ -294,9 +301,9 @@ func NewTestJSONFormatter() *JSONFormatter {
 func (w *writer) writeError(value interface{}) {
 	switch err := value.(type) {
 	case trace.Error:
-		*w.b = fmt.Appendf(*w.b, " error:[%v]", err.DebugReport())
+		*w.b = fmt.Appendf(*w.b, "[%v]", err.DebugReport())
 	default:
-		*w.b = fmt.Appendf(*w.b, " error:[%v]", value)
+		*w.b = fmt.Appendf(*w.b, "[%v]", value)
 	}
 }
 
@@ -453,22 +460,9 @@ func frameToTrace(frame runtime.Frame) trace.Trace {
 	}
 }
 
-func (r knownFormatFieldsMap) has(name string) bool {
-	_, ok := r[name]
-	return ok
-}
+var knownFormatFieldNames = []string{levelField, componentField, callerField, timestampField}
 
-func (r knownFormatFieldsMap) names() (result []string) {
-	for k := range r {
-		result = append(result, k)
-	}
-	return result
-}
-
-type knownFormatFieldsMap map[string]struct{}
-
-// KnownFormatFields are the known fields for log entries
-var KnownFormatFields = knownFormatFieldsMap{
+var knownFormatFields = map[string]struct{}{
 	levelField:     {},
 	componentField: {},
 	callerField:    {},
@@ -478,7 +472,7 @@ var KnownFormatFields = knownFormatFieldsMap{
 func parseInputFormat(formatInput []string) (result []string, err error) {
 	for _, component := range formatInput {
 		component = strings.TrimSpace(component)
-		if !KnownFormatFields.has(component) {
+		if _, ok := knownFormatFields[component]; !ok {
 			return nil, trace.BadParameter("invalid log format key: %q", component)
 		}
 		result = append(result, component)

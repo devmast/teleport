@@ -158,6 +158,9 @@ func (s *SlogTextHandler) Handle(ctx context.Context, r slog.Record) error {
 	case slog.LevelDebug:
 		level = "DEBUG"
 		color = gray
+	case slog.LevelInfo:
+		level = "INFO"
+		color = gray
 	case slog.LevelWarn:
 		level = "WARN"
 		color = yellow
@@ -294,7 +297,25 @@ func NewSlogJSONHandler(w io.Writer, level slog.Leveler) *SlogJSONHandler {
 				case trace.Component:
 					a.Key = "component"
 				case slog.LevelKey:
-					a.Value = slog.StringValue(strings.ToLower(a.Value.String()))
+					var level string
+					switch lvl := a.Value.Any().(slog.Level); lvl {
+					case slog.LevelDebug - 1:
+						level = "trace"
+					case slog.LevelDebug:
+						level = "debug"
+					case slog.LevelInfo:
+						level = "info"
+					case slog.LevelWarn:
+						level = "warning"
+					case slog.LevelError:
+						level = "error"
+					case slog.LevelError + 1:
+						level = "fatal"
+					default:
+						level = strings.ToLower(lvl.String())
+					}
+
+					a.Value = slog.StringValue(level)
 				case slog.TimeKey:
 					a.Key = "timestamp"
 					a.Value = slog.StringValue(a.Value.Time().Format(time.RFC3339))
