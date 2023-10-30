@@ -1,0 +1,44 @@
+---
+title: Upgrading Teleport Agents on Kubernetes
+description: Explains how to upgrade Teleport agents running on Kubernetes.
+---
+
+This guide explains a manual approach to upgrading Teleport agents running on
+Kubernetes.
+
+For instructions on setting up Teleport agents to upgrade themselves
+automatically, read the following guides: {/*TODO: link to  the agent guides*/}
+
+An agent is a `teleport` binary that runs services other than the Auth Service
+and Proxy Service, and proxies resources in your infrastructure. Examples
+include the Teleport SSH Service and Teleport Database Service.
+
+For an overview of how Teleport agents function within a Teleport cluster, read
+the [Teleport Agents](../agents/introduction.mdx) documentation.
+
+## Prerequisites
+
+{/*TODO: Talk about the upgrade sequence here. The Auth/Proxy should be
+upgraded first, I think. Link to the guides on upgrading these*/}
+
+- A running Teleport cluster with at least one agent deployed using the
+  `teleport-kube-agent` Helm chart. 
+
+This guide assumes that you have configured the `teleport-kube-agent` Helm chart
+with a values file called `values.yaml`, and that your release is called
+`teleport-agent`.
+
+## Upgrade your `teleport-kube-agent` Helm release
+
+Run the following commands to upgrade Teleport agents running on Kubernetes.
+
+1. Update the Teleport Helm chart repository so you can install the latest
+   version of the `teleport-kube-agent` chart:
+
+  (!docs/pages//kubernetes-access/helm/includes/helm-repo-add.mdx!)
+
+1. Upgrade the Helm release:
+
+  ```code
+  $ helm upgrade teleport-agent teleport-kube-agent --version=(=teleport.version=) --values=values.yaml
+  ```

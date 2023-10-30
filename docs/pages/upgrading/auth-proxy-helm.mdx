@@ -16,7 +16,8 @@ instances running on Kubernetes.
   backup instructions.
 
 This guide assumes that you have configured the `teleport-cluster` Helm chart
-with a values file called `values.yaml`. 
+with a values file called `values.yaml`, and that your `teleport-cluster`
+release is called `teleport-cluster`.
 
 ## Step 1/2. Edit your `teleport-cluster` values file
 
@@ -28,8 +29,8 @@ Ensure that your `teleport-cluster` values file includes the followinmg
 configuration:
 
 ```yaml
-auth
-  highAvailability
+auth:
+  highAvailability:
     replicaCount: 1
 ```
 
@@ -49,7 +50,7 @@ running on Kubernetes.
 1. Upgrade the Helm release:
 
   ```code
-  helm upgrade --version=(=teleport.version=) --values=values.yaml
+  $ helm upgrade teleport-cluster teleport-cluster --version=(=teleport.version=) --values=values.yaml
   ```
 
 The `teleport-cluster` Helm chart automatically waits for the previous version
