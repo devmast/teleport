@@ -39,7 +39,7 @@
 	      "slug": "/upgrading/agents-helm/"
 	    },
             {
-              "title": "Self-Hosted Automatic Upgrades",
+              "title": "Self-Hosted Automatic Agent Upgrades",
               "slug": "/management/operations/self-hosted-automatic-agent-updates/",
               "forScopes": ["enterprise"]
             },
@@ -48,7 +48,6 @@
               "slug": "/management/operations/enroll-agent-into-automatic-updates/",
               "forScopes": ["enterprise", "cloud"]
             }
-
 	  ]
 	},
         {
@@ -3023,6 +3022,16 @@
     {
       "source": "/management/operations/self-hosted-automatic-agent-updates/",
       "destination": "/upgrading/self-hosted-automatic-agent-updates/",
+      "permanent": true
+    },
+    {
+      "source": "/management/operations/upgrading/",
+      "destination": "/upgrading/",
+      "permanent": true
+    },
+    {
+      "source": "/management/admin/upgrading-the-teleport-binary/",
+      "destination": "/upgrading/",
       "permanent": true
     }
   ]
