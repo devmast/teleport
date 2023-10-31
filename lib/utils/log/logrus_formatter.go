@@ -25,10 +25,12 @@ import (
 	"unicode"
 
 	"github.com/gravitational/trace"
-	log "github.com/sirupsen/logrus"
+	"github.com/sirupsen/logrus"
 	"golang.org/x/exp/slices"
 )
 
+// TextFormatter is a [logrus.Formatter] that outputs messages in
+// a textual format.
 type TextFormatter struct {
 	// ComponentPadding is a padding to pick when displaying
 	// and formatting component field, defaults to DefaultComponentPadding
@@ -87,6 +89,8 @@ const (
 	messageField   = "message"
 )
 
+// NewDefaultTextFormatter creates a TextFormatter with
+// the default options set.
 func NewDefaultTextFormatter(enableColors bool) *TextFormatter {
 	return &TextFormatter{
 		ComponentPadding: trace.DefaultComponentPadding,
@@ -98,7 +102,7 @@ func NewDefaultTextFormatter(enableColors bool) *TextFormatter {
 	}
 }
 
-// CheckAndSetDefaults checks and sets log format configuration
+// CheckAndSetDefaults checks and sets log format configuration.
 func (tf *TextFormatter) CheckAndSetDefaults() error {
 	// set padding
 	if tf.ComponentPadding == 0 {
@@ -132,8 +136,8 @@ func (tf *TextFormatter) CheckAndSetDefaults() error {
 	return nil
 }
 
-// Format formats each log line as configured in teleport config file
-func (tf *TextFormatter) Format(e *log.Entry) ([]byte, error) {
+// Format formats each log line as configured in teleport config file.
+func (tf *TextFormatter) Format(e *logrus.Entry) ([]byte, error) {
 	caller := tf.FormatCaller()
 	w := newWriter()
 	defer w.Free()
@@ -143,29 +147,28 @@ func (tf *TextFormatter) Format(e *log.Entry) ([]byte, error) {
 		writeTimeRFC3339(w.b, e.Time)
 	}
 
-	var wroteLevel bool
 	for _, field := range tf.ExtraFields {
 		switch field {
 		case "level":
 			var color int
 			var level string
 			switch e.Level {
-			case log.TraceLevel:
+			case logrus.TraceLevel:
 				level = "TRACE"
 				color = gray
-			case log.DebugLevel:
+			case logrus.DebugLevel:
 				level = "DEBUG"
 				color = gray
-			case log.InfoLevel:
+			case logrus.InfoLevel:
 				level = "INFO"
 				color = blue
-			case log.WarnLevel:
+			case logrus.WarnLevel:
 				level = "WARN"
 				color = yellow
-			case log.ErrorLevel:
+			case logrus.ErrorLevel:
 				level = "ERROR"
 				color = red
-			case log.FatalLevel:
+			case logrus.FatalLevel:
 				level = "FATAL"
 				color = red
 			default:
@@ -177,7 +180,6 @@ func (tf *TextFormatter) Format(e *log.Entry) ([]byte, error) {
 				color = noColor
 			}
 
-			wroteLevel = true
 			w.writeField(padMax(level, trace.DefaultLevelPadding), color)
 		case "component":
 			padding := trace.DefaultComponentPadding
@@ -194,10 +196,6 @@ func (tf *TextFormatter) Format(e *log.Entry) ([]byte, error) {
 			component = strings.ToUpper(padMax(component, padding))
 			if component[len(component)-1] != ' ' {
 				component = component[:len(component)-1] + "]"
-			}
-
-			if !wroteLevel {
-				wroteLevel = true
 			}
 
 			w.WriteString(component)
@@ -226,10 +224,10 @@ func (tf *TextFormatter) Format(e *log.Entry) ([]byte, error) {
 	return w.Bytes(), nil
 }
 
-// JSONFormatter implements the logrus.Formatter interface and adds extra
-// fields to log entries
+// JSONFormatter implements the [logrus.Formatter] interface and adds extra
+// fields to log entries.
 type JSONFormatter struct {
-	log.JSONFormatter
+	logrus.JSONFormatter
 
 	ExtraFields []string
 
@@ -237,7 +235,7 @@ type JSONFormatter struct {
 	componentEnabled bool
 }
 
-// CheckAndSetDefaults checks and sets log format configuration
+// CheckAndSetDefaults checks and sets log format configuration.
 func (j *JSONFormatter) CheckAndSetDefaults() error {
 	// set log formatting
 	if j.ExtraFields == nil {
@@ -263,19 +261,19 @@ func (j *JSONFormatter) CheckAndSetDefaults() error {
 	}
 
 	// rename default fields
-	j.JSONFormatter = log.JSONFormatter{
-		FieldMap: log.FieldMap{
-			log.FieldKeyTime:  timestampField,
-			log.FieldKeyLevel: levelField,
-			log.FieldKeyMsg:   messageField,
+	j.JSONFormatter = logrus.JSONFormatter{
+		FieldMap: logrus.FieldMap{
+			logrus.FieldKeyTime:  timestampField,
+			logrus.FieldKeyLevel: levelField,
+			logrus.FieldKeyMsg:   messageField,
 		},
 	}
 
 	return nil
 }
 
-// Format implements logrus.Formatter interface
-func (j *JSONFormatter) Format(e *log.Entry) ([]byte, error) {
+// Format formats each log line as configured in teleport config file.
+func (j *JSONFormatter) Format(e *logrus.Entry) ([]byte, error) {
 	if j.callerEnabled {
 		path := formatCallerWithPathAndLine()
 		e.Data[callerField] = path
@@ -290,6 +288,8 @@ func (j *JSONFormatter) Format(e *log.Entry) ([]byte, error) {
 	return j.JSONFormatter.Format(e)
 }
 
+// NewTestJSONFormatter creates a JSONFormatter that is
+// configured for output in tests.
 func NewTestJSONFormatter() *JSONFormatter {
 	formatter := &JSONFormatter{}
 	if err := formatter.CheckAndSetDefaults(); err != nil {
@@ -329,7 +329,7 @@ func (w *writer) writeKeyValue(key string, value interface{}) {
 	}
 	w.WriteString(key)
 	w.WriteByte(':')
-	if key == log.ErrorKey {
+	if key == logrus.ErrorKey {
 		w.writeError(value)
 		return
 	}
@@ -378,7 +378,7 @@ func (w *writer) writeMap(m map[string]any) {
 		switch value := m[key].(type) {
 		case map[string]any:
 			w.writeMap(value)
-		case log.Fields:
+		case logrus.Fields:
 			w.writeMap(value)
 		default:
 			w.writeKeyValue(key, value)

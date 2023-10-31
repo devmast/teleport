@@ -30,6 +30,11 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+// TraceLevel is the logging level when set to Trace verbosity.
+const TraceLevel = slog.LevelDebug - 1
+
+// SlogTextHandler is a [slog.Handler] that outputs messages in a textual
+// manner as configured by the Teleport configuration.
 type SlogTextHandler struct {
 	level          slog.Leveler
 	enableColors   bool
@@ -40,6 +45,7 @@ type SlogTextHandler struct {
 	out            io.Writer
 }
 
+// NewSLogTextHandler creates a SlogTextHandler that writes messages to w.
 func NewSLogTextHandler(w io.Writer, level slog.Leveler, enableColors bool) *SlogTextHandler {
 	return &SlogTextHandler{
 		level:        level,
@@ -49,6 +55,7 @@ func NewSLogTextHandler(w io.Writer, level slog.Leveler, enableColors bool) *Slo
 	}
 }
 
+// Enabled returns whether the provided level will be included in output.
 func (s *SlogTextHandler) Enabled(ctx context.Context, level slog.Level) bool {
 	return level >= s.level.Level()
 }
@@ -109,7 +116,7 @@ func (s *SlogTextHandler) appendAttr(buf []byte, a slog.Attr) []byte {
 
 // writeTimeRFC3339 writes the time in [time.RFC3339Nano] to the buffer.
 // This takes half the time of [time.Time.AppendFormat]. Adapted from
-// go/src/log/slog/handler.go
+// go/src/log/slog/handler.go.
 func writeTimeRFC3339(buf *buffer, t time.Time) {
 	year, month, day := t.Date()
 	buf.WritePosIntWidth(year, 4)
@@ -141,6 +148,8 @@ func writeTimeRFC3339(buf *buffer, t time.Time) {
 	}
 }
 
+// Handle formats the provided record and writes the output to the
+// destination.
 func (s *SlogTextHandler) Handle(ctx context.Context, r slog.Record) error {
 	buf := newBuffer()
 	defer buf.Free()
@@ -152,7 +161,7 @@ func (s *SlogTextHandler) Handle(ctx context.Context, r slog.Record) error {
 	var color int
 	var level string
 	switch r.Level {
-	case slog.LevelDebug - 1:
+	case TraceLevel:
 		level = "TRACE"
 		color = gray
 	case slog.LevelDebug:
@@ -220,6 +229,9 @@ func (s *SlogTextHandler) Handle(ctx context.Context, r slog.Record) error {
 	return err
 }
 
+// WithAttrs clones the current handler with the provided attributes
+// added to any existing attributes. The values are preformatted here
+// so that they do not need to be formatted per call to Handle.
 func (s *SlogTextHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	if len(attrs) == 0 {
 		return s
@@ -270,6 +282,7 @@ func (s *SlogTextHandler) appendUnopenedGroups(buf []byte) []byte {
 	return buf
 }
 
+// WithGroup opens a new group.
 func (s *SlogTextHandler) WithGroup(name string) slog.Handler {
 	if name == "" {
 		return s
@@ -283,10 +296,13 @@ func (s *SlogTextHandler) WithGroup(name string) slog.Handler {
 	return &s2
 }
 
+// SlogJSONHandler is a [slog.Handler] that outputs messages in a json
+// format per the config file.
 type SlogJSONHandler struct {
 	handler *slog.JSONHandler
 }
 
+// NewSlogJSONHandler creates a SlogJSONHandler that outputs to w.
 func NewSlogJSONHandler(w io.Writer, level slog.Leveler) *SlogJSONHandler {
 	return &SlogJSONHandler{
 		handler: slog.NewJSONHandler(w, &slog.HandlerOptions{
@@ -299,7 +315,7 @@ func NewSlogJSONHandler(w io.Writer, level slog.Leveler) *SlogJSONHandler {
 				case slog.LevelKey:
 					var level string
 					switch lvl := a.Value.Any().(slog.Level); lvl {
-					case slog.LevelDebug - 1:
+					case TraceLevel:
 						level = "trace"
 					case slog.LevelDebug:
 						level = "debug"
@@ -348,18 +364,23 @@ func getCaller(a slog.Attr) (file string, line int) {
 	return
 }
 
+// Enabled returns whether the provided level will be included in output.
 func (s *SlogJSONHandler) Enabled(ctx context.Context, level slog.Level) bool {
 	return s.handler.Enabled(ctx, level)
 }
 
+// Handle formats the record and produces a message that is written to the destination.
 func (s *SlogJSONHandler) Handle(ctx context.Context, record slog.Record) error {
 	return s.handler.Handle(ctx, record)
 }
 
+// WithAttrs returns a new JSONHandler whose attributes consists
+// of s's attributes followed by attrs.
 func (s *SlogJSONHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	return s.handler.WithAttrs(attrs)
 }
 
+// WithGroup returns a new JSONHandler that has a new group opened.
 func (s *SlogJSONHandler) WithGroup(name string) slog.Handler {
 	return s.handler.WithGroup(name)
 }

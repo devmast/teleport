@@ -31,15 +31,13 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/gravitational/teleport/lib/utils"
 )
 
 const message = "Adding diagnostic debugging handlers.\t To connect with profiler, use `go tool pprof diag_addr`."
 
 var (
 	logErr = errors.New("the quick brown fox jumped really high")
-	addr   = utils.NetAddr{Addr: "127.0.0.1:1234", AddrNetwork: "tcp"}
+	addr   = fakeAddr{addr: "127.0.0.1:1234"}
 
 	fields = logrus.Fields{
 		"local":        &addr,
@@ -50,9 +48,29 @@ var (
 	}
 )
 
+type fakeAddr struct {
+	addr string
+}
+
+func (a fakeAddr) Network() string {
+	return "tcp"
+}
+
+func (a fakeAddr) String() string {
+	return a.addr
+}
+
 func TestOutput(t *testing.T) {
 	t.Run("text", func(t *testing.T) {
+		// fieldsRegex matches all the key value pairs emitted after the message and before the caller. All fields are
+		// in the following format key:value key2:value2 key3:value3.
 		fieldsRegex := regexp.MustCompile(`(\w+):((?:"[^"]*"|\[[^]]*]|\S+))\s*`)
+		// outputRegex groups the entire log output into 4 distinct matches. The regular expression is tailored toward
+		// the output emitted by the test and is not a general purpose match for all output emitted by the loggers.
+		// 1) the timestamp, component and level
+		// 2) the message
+		// 3) the fields
+		// 4) the caller
 		outputRegex := regexp.MustCompile("(\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}-\\d{2}:\\d{2}\\s.*\\[.*]\\s+)(\".*diag_addr`\\.\"\\s)(.*)(log/formatter_test.go:\\d+)")
 
 		tests := []struct {
@@ -63,7 +81,7 @@ func TestOutput(t *testing.T) {
 			{
 				name:        "trace",
 				logrusLevel: logrus.TraceLevel,
-				slogLevel:   slog.LevelDebug - 1,
+				slogLevel:   TraceLevel,
 			},
 			{
 				name:        "debug",
@@ -165,7 +183,7 @@ func TestOutput(t *testing.T) {
 			{
 				name:        "trace",
 				logrusLevel: logrus.TraceLevel,
-				slogLevel:   slog.LevelDebug - 1,
+				slogLevel:   TraceLevel,
 			},
 			{
 				name:        "debug",
