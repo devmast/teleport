@@ -163,9 +163,16 @@ version.
 
 We recommend that Teleport users set up automatic agent upgrades, where agents
 query a **version server** in order to determine whether they are out of date
-and need to install a new version of Teleport. Read one of the following guides
-to set up automatic agent upgrades:
+and need to install a new version of Teleport. 
 
-- [Self-hosted Teleport clusters](./upgrading//self-hosted-automatic-agent-updates.mdx)
-- [Teleport Cloud](./upgrading//enroll-agent-into-automatic-updates.mdx)
+On Teleport Cloud, the version server is managed for you.
+
+If you are running Teleport Enterprise, read the [Self-Hosted Automatic Agent
+Updates](./upgrading/self-hosted-automatic-agent-updates.mdx) guide to set up
+the version server yourself.
+
+Read [Enroll Agents into Automatic
+Updates](./upgrading//enroll-agent-into-automatic-updates.mdx) for how to set up
+Teleport agents to query the version server and install new versions of Teleport
+when they fall out of date.
 

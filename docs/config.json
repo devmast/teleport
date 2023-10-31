@@ -21,37 +21,37 @@
 	  "slug": "/upgrading/",
 	  "entries": [
 	    {
-	      "title": "Upgrading Overview",
+	      "title": "Upgrading Compatibility Overview",
 	      "slug": "/upgrading/overview/"
 	    },
 	    {
-	      "title": "Teleport Cluster (Linux)",
+	      "title": "Teleport Cluster Upgrades (Linux)",
 	      "slug": "/upgrading/auth-proxy-linux/",
 	      "forScopes": ["oss", "enterprise"]
 	    },
 	    {
-	      "title": "Teleport Cluster (Kubernetes)",
+	      "title": "Teleport Cluster Upgrades (Kubernetes)",
 	      "slug": "/upgrading/auth-proxy-helm/",
 	      "forScopes": ["oss", "enterprise"]
 	    },
-	    {
-	      "title": "Teleport Agents (Linux)",
-	      "slug": "/upgrading/agents-linux/"
-	    },
-	    {
-	      "title": "Teleport Agents (Kubernetes)",
-	      "slug": "/upgrading/agents-helm/"
-	    },
             {
-              "title": "Self-Hosted Automatic Agent Upgrades",
+              "title": "Deploying Automatic Upgrade Infrastructure",
               "slug": "/upgrading/self-hosted-automatic-agent-updates/",
               "forScopes": ["enterprise"]
             },
             {
-              "title": "Enroll Agents in Automatic Upgrades",
+              "title": "Enrolling Agents in Automatic Upgrades",
               "slug": "/upgrading/enroll-agent-into-automatic-updates/",
               "forScopes": ["enterprise", "cloud", "team"]
-            }
+            },
+	    {
+	      "title": "Manual Agent Upgrades (Linux)",
+	      "slug": "/upgrading/agents-linux/"
+	    },
+	    {
+	      "title": "Manual Agent Upgrades (Kubernetes)",
+	      "slug": "/upgrading/agents-helm/"
+	    }
 	  ]
 	},
         {
