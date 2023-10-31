@@ -24,6 +24,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
@@ -61,6 +62,17 @@ func (a fakeAddr) String() string {
 }
 
 func TestOutput(t *testing.T) {
+	// Set a specific time zone so that the regex doesn't have to match
+	// against any possible timezone. Note this mucks around with the global
+	// time zone which prevents running this test in parallel.
+	loc, err := time.LoadLocation("Africa/Cairo")
+	require.NoError(t, err, "failed getting timezone")
+	oldLoc := time.Local
+	time.Local = loc
+	t.Cleanup(func() {
+		time.Local = oldLoc
+	})
+
 	t.Run("text", func(t *testing.T) {
 		// fieldsRegex matches all the key value pairs emitted after the message and before the caller. All fields are
 		// in the following format key:value key2:value2 key3:value3.
@@ -71,7 +83,7 @@ func TestOutput(t *testing.T) {
 		// 2) the message
 		// 3) the fields
 		// 4) the caller
-		outputRegex := regexp.MustCompile("(\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}-\\d{2}:\\d{2}\\s.*\\[.*]\\s+)(\".*diag_addr`\\.\"\\s)(.*)(log/formatter_test.go:\\d+)")
+		outputRegex := regexp.MustCompile("(\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\+\\d{2}:\\d{2})(\\s+.*)(\".*diag_addr`\\.\")(.*)(\\slog/formatter_test.go:\\d{3})")
 
 		tests := []struct {
 			name        string
@@ -144,19 +156,28 @@ func TestOutput(t *testing.T) {
 				slogMatches := outputRegex.FindStringSubmatch(slogOutput.String())
 				require.NotEmpty(t, slogMatches, "slog output was in unexpected format: %s", slogOutput.String())
 
-				// The first match is the timestamp, level, and component: 2023-10-31T10:09:06-04:00 DEBU [TEST]
-				assert.Empty(t, cmp.Diff(logrusMatches[1], slogMatches[1]), "expected timestamp, level, and component to be identical")
-				// The second match is the log message: "Adding diagnostic debugging handlers.\t To connect with profiler, use `go tool pprof diag_addr`.\n"
-				assert.Empty(t, cmp.Diff(logrusMatches[2], slogMatches[2]), "expected output messages to be identical")
+				// The first match is the timestamp: 2023-10-31T10:09:06+02:00
+				logrusTime, err := time.Parse(time.RFC3339, logrusMatches[1])
+				assert.NoError(t, err, "invalid logrus timestamp found %s", logrusMatches[1])
+
+				slogTime, err := time.Parse(time.RFC3339, slogMatches[1])
+				assert.NoError(t, err, "invalid slog timestamp found %s", slogMatches[1])
+
+				assert.InDelta(t, logrusTime.UnixNano(), slogTime.UnixNano(), 10)
+
+				// Match level, and component: DEBU [TEST]
+				assert.Empty(t, cmp.Diff(logrusMatches[2], slogMatches[2]), "level, and component to be identical")
+				// Match the log message: "Adding diagnostic debugging handlers.\t To connect with profiler, use `go tool pprof diag_addr`.\n"
+				assert.Empty(t, cmp.Diff(logrusMatches[3], slogMatches[3]), "expected output messages to be identical")
 				// The last matches are the caller information
-				assert.Equal(t, "log/formatter_test.go:134", logrusMatches[4])
-				assert.Equal(t, "log/formatter_test.go:138", slogMatches[4])
+				assert.Equal(t, " log/formatter_test.go:146", logrusMatches[5])
+				assert.Equal(t, " log/formatter_test.go:150", slogMatches[5])
 
 				// The third matches are the fields which will be key value pairs(animal:llama) separated by a space. Since
 				// logrus sorts the fields and slog doesn't we can't just assert equality and instead build a map of the key
 				// value pairs to ensure they are all present and accounted for.
-				logrusFieldMatches := fieldsRegex.FindAllStringSubmatch(logrusMatches[3], -1)
-				slogFieldMatches := fieldsRegex.FindAllStringSubmatch(slogMatches[3], -1)
+				logrusFieldMatches := fieldsRegex.FindAllStringSubmatch(logrusMatches[4], -1)
+				slogFieldMatches := fieldsRegex.FindAllStringSubmatch(slogMatches[4], -1)
 
 				// The first match is the key, the second match is the value
 				logrusFields := map[string]string{}
@@ -253,12 +274,12 @@ func TestOutput(t *testing.T) {
 				logrusCaller, ok := logrusData["caller"].(string)
 				delete(logrusData, "caller")
 				assert.True(t, ok, "caller was missing from logrus output")
-				assert.Equal(t, "log/formatter_test.go:238", logrusCaller)
+				assert.Equal(t, "log/formatter_test.go:259", logrusCaller)
 
 				slogCaller, ok := slogData["caller"].(string)
 				delete(slogData, "caller")
 				assert.True(t, ok, "caller was missing from slog output")
-				assert.Equal(t, "log/formatter_test.go:242", slogCaller)
+				assert.Equal(t, "log/formatter_test.go:263", slogCaller)
 
 				require.Empty(t,
 					cmp.Diff(
