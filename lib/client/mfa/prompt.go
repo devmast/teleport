@@ -130,8 +130,8 @@ func WithPromptDeviceType(deviceType DeviceDescriptor) PromptOpt {
 
 // RunOpts are mfa prompt run options.
 type RunOpts struct {
-	promptTOTP     bool
-	promptWebauthn bool
+	PromptTOTP     bool
+	PromptWebauthn bool
 }
 
 // GetRunOptions gets mfa prompt run options by cross referencing the mfa challenge with prompt configuration.
@@ -167,7 +167,7 @@ func (c PromptConfig) GetRunOptions(ctx context.Context, chal *proto.MFAAuthenti
 	return RunOpts{promptTOTP, promptWebauthn}, nil
 }
 
-func (c PromptConfig) getWebauthnOrigin() string {
+func (c PromptConfig) GetWebauthnOrigin() string {
 	if !strings.HasPrefix(c.ProxyAddress, "https://") {
 		return "https://" + c.ProxyAddress
 	}
