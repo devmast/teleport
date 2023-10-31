@@ -273,7 +273,10 @@ func (g *gcpKMSKeyStore) DeleteUnusedKeys(ctx context.Context, activeKeys [][]by
 	listKeyRequest := &kmspb.ListCryptoKeysRequest{
 		Parent: g.keyRing,
 		// Only bother listing keys created by Teleport which should have the
-		// hostLabel set
+		// hostLabel set. A filter of "labels.label:*" tests if the label is
+		// defined.
+		// https://cloud.google.com/sdk/gcloud/reference/topic/filters
+		// > Use key:* to test if key is defined
 		Filter: fmt.Sprintf("labels.%s:*", hostLabel),
 	}
 	iter := g.kmsClient.ListCryptoKeys(ctx, listKeyRequest)

@@ -640,17 +640,17 @@ func TestGCPKMSDeleteUnusedKeys(t *testing.T) {
 			// keyring should not break the DeleteUnusedKeys operation.
 			desc: "active key from other host",
 			existingKeys: []keySpec{
-				{keyring: localKeyring, id: "id_local_active", host: localHostID},
-				{keyring: localKeyring, id: "id_local_inactive", host: localHostID},
-				{keyring: localKeyring, id: "id_remote_active", host: otherHostID},
-				{keyring: localKeyring, id: "id_remote_inactive", host: otherHostID},
+				{keyring: localKeyring, id: "id_active_local", host: localHostID},
+				{keyring: localKeyring, id: "id_inactive_local", host: localHostID},
+				{keyring: localKeyring, id: "id_active_remote", host: otherHostID},
+				{keyring: localKeyring, id: "id_inactive_remote", host: otherHostID},
 			},
 			activeKeys: []keySpec{
-				{keyring: localKeyring, id: "id_local_active", host: localHostID},
-				{keyring: localKeyring, id: "id_remote_active", host: otherHostID},
+				{keyring: localKeyring, id: "id_active_local", host: localHostID},
+				{keyring: localKeyring, id: "id_active_remote", host: otherHostID},
 			},
 			expectDestroyed: []keySpec{
-				{keyring: localKeyring, id: "id_local_inactive", host: localHostID},
+				{keyring: localKeyring, id: "id_inactive_local", host: localHostID},
 			},
 		},
 		{
