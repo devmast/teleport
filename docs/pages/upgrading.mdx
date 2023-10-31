@@ -1,100 +1,43 @@
 ---
 title: Upgrading Teleport
 description: Explains how to upgrade Teleport depending on your environment and edition.
+layout: tocless-doc
 ---
 
 The guides in this section show you how to upgrade Teleport to a more recent
 version.
 
-## Upgrading concepts
+## Upgrading overview
 
-A Teleport cluster consists of the Teleport Auth Service, Teleport Proxy
-Service, and Teleport agents. (Read the [Core Concepts](core-concepts.mdx) guide
-for an explanation of key architectural terms.)
+Since Teleport is a distributed system with a number of services that run on
+potentially many hosts, you should take care when upgrading the cluster to
+ensure that all components remain compatible.
 
-Because a Teleport cluster is a distributed system, you must adhere to the
-following principles when upgrading different components in the system.
+The [Upgrading Overview](./upgrading/overview.mdx) guide provides an overview of
+how to upgrade the components in your Teleport cluster while preserving
+compatibility.
 
-### Component compatibility
+## Upgrading self-hosted clusters
 
-Teleport uses [Semantic Versioning](https://semver.org/). Version numbers
-include a major version, minor version, and patch version, separated by dots.
+After reading the Upgrading Overview, self-hosted Teleport administrators should
+follow one of the guides below to upgrade the Auth Service and Proxy Service:
 
-(!docs/pages/includes/compatibility.mdx!)
+- [Kubernetes](./upgrading/auth-proxy-helm.mdx)
+- [Linux Servers](./upgrading/auth-proxy-linux.mdx)
 
-In Teleport Team and Teleport Enterprise Cloud, we manage the Auth and Proxy
-Services for you. You can determine the current version of these services by
-running the following command, where `mytenant` is the name of your Teleport
-Team or Teleport Enterprise Cloud tenant:
+## Upgrading agents
 
-```code
-$ curl -s https://mytenant.teleport.sh/webapi/ping | jq '.server_version'
-```
+We recommend that Teleport users set up automatic agent upgrades, where agents
+query a **version server** in order to determine whether they are out of date
+and need to install a new version of Teleport. Read one of the following guides
+to set up automatic agent upgrades:
 
-### Upgrade sequence
+- [Self-hosted Teleport clusters](./upgrading//self-hosted-automatic-agent-updates.mdx)
+- [Teleport Cloud](./upgrading//enroll-agent-into-automatic-updates.mdx)
 
-You must adhere to the following sequence when upgrading a Teleport cluster:
+For special circumstances, you can also read about how to upgrade agents
+manually in your environment (the instructions are the same for self-hosted and
+Teleport Cloud clusters):
 
-{/*TODO: Edit the text in this section, which is mostly pasted from a previous
-guide*/}
-
-<Tabs>
-<TabItem scope={["enterprise", "oss"]} label="Self-Hosted">
-
-Teleport requires upgrading the Teleport Cluster from one major version to
-another in sequence.  If you are currently on version 11.x, you must upgrade to
-the latest version 12.x before going to version 13.x. To upgrade in sequence,
-upgrade the Teleport cluster and confirm a healthy start before continuing to
-the next version.
-
-When upgrading a single Teleport cluster:
-
-- Upgrade the **Auth Service** to the next **major version first**.  The Auth
-  Service keeps the cluster state. If there are data format changes introduced
-  in the new version, the Auth Service performs the necessary migrations.  After
-  the upgrade, start the Auth Service and CONFIRM that it's in a healthy state
-  before continuing.
-- Upgrade Proxy Service instances to the same version number as the Auth
-  Service.  Proxy Service instances are stateless and can be upgraded in any
-  sequence or at the same time.
-- Upgrade your Teleport resource services to the same version number as the Auth
-  Service.  You can upgrade resource agents in any sequence or at the same time.
-   
-   If you are upgrading more then one version number, repeat these steps until
-   you reach your target major version number.
-
-If several Auth Service instances are running in the High Availability
-configuration (for example, in an AWS Auto Scaling group), you must shrink the
-group to **just one Auth Service** before performing an upgrade.
-
-While Teleport will attempt to perform any necessary migrations, we recommend
-users create a backup of their backend before upgrading the Auth Server as a
-precaution. This allows for a safe rollback in case the migration itself fails.
-
-When upgrading multiple clusters:
-
-- Upgrade the root cluster—that is, the cluster that other clusters trust—first.
-- Verify the upgrade was successful.
-- Upgrade the trusted leaf clusters.
-
-</TabItem>
-<TabItem scope={["cloud","team"]} label="Cloud-Hosted">
-
-The Teleport Auth Service and Proxy Service are upgraded automatically. When
-upgrading resource services, you may upgrade in any sequence or at the same
-time.
-
-When upgrading multiple clusters:
-
-- Upgrade the root cluster—that is, the cluster that other clusters trust—first.
-- Verify the upgrade was successful.
-- Upgrade the trusted leaf clusters.
-
-</TabItem>
-</Tabs>
-
-
-{/*TODO: link to cluster upgrade guides*/}
-{/*TODO: agent manual upgrade guides*/}
-{/*TODO: agent auto-upgrade guides*/}
-
+- [Kubernetes](./upgrading/agents-helm.mdx)
+- [Linux Servers](./upgrading/agents-linux.mdx)

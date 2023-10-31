@@ -21,6 +21,10 @@
 	  "slug": "/upgrading/",
 	  "entries": [
 	    {
+	      "title": "Upgrading Overview",
+	      "slug": "/upgrading/overview/"
+	    },
+	    {
 	      "title": "Teleport Cluster (Linux)",
 	      "slug": "/upgrading/auth-proxy-linux/",
 	      "forScopes": ["oss", "enterprise"]
@@ -40,13 +44,13 @@
 	    },
             {
               "title": "Self-Hosted Automatic Agent Upgrades",
-              "slug": "/management/operations/self-hosted-automatic-agent-updates/",
+              "slug": "/upgrading/self-hosted-automatic-agent-updates/",
               "forScopes": ["enterprise"]
             },
             {
               "title": "Enroll Agents in Automatic Upgrades",
-              "slug": "/management/operations/enroll-agent-into-automatic-updates/",
-              "forScopes": ["enterprise", "cloud"]
+              "slug": "/upgrading/enroll-agent-into-automatic-updates/",
+              "forScopes": ["enterprise", "cloud", "team"]
             }
 	  ]
 	},
@@ -631,10 +635,6 @@
               "forScopes": ["oss", "enterprise"]
             },
             {
-              "title": "Upgrading a Cluster",
-              "slug": "/management/operations/upgrading/"
-            },
-            {
               "title": "Backup and Restore",
               "slug": "/management/operations/backup-restore/"
             },
@@ -651,16 +651,6 @@
               "title": "Proxy Peering Migration",
               "slug": "/management/operations/proxy-peering/",
               "forScopes": ["enterprise"]
-            },
-            {
-              "title": "Self-Hosted Automatic Updates",
-              "slug": "/management/operations/self-hosted-automatic-agent-updates/",
-              "forScopes": ["enterprise"]
-            },
-            {
-              "title": "Enroll Agents in Automatic Updates",
-              "slug": "/management/operations/enroll-agent-into-automatic-updates/",
-              "forScopes": ["enterprise", "cloud", "team"]
             }
           ]
         },
@@ -2501,7 +2491,7 @@
     },
     {
       "source": "/setup/operations/upgrading/",
-      "destination": "/management/operations/upgrading/",
+      "destination": "/upgrading/",
       "permanent": true
     },
     {
