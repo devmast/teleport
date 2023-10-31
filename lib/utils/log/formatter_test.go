@@ -149,8 +149,8 @@ func TestOutput(t *testing.T) {
 				// The second match is the log message: "Adding diagnostic debugging handlers.\t To connect with profiler, use `go tool pprof diag_addr`.\n"
 				assert.Empty(t, cmp.Diff(logrusMatches[2], slogMatches[2]), "expected output messages to be identical")
 				// The last matches are the caller information
-				assert.Equal(t, "log/formatter_test.go:116", logrusMatches[4])
-				assert.Equal(t, "log/formatter_test.go:120", slogMatches[4])
+				assert.Equal(t, "log/formatter_test.go:134", logrusMatches[4])
+				assert.Equal(t, "log/formatter_test.go:138", slogMatches[4])
 
 				// The third matches are the fields which will be key value pairs(animal:llama) separated by a space. Since
 				// logrus sorts the fields and slog doesn't we can't just assert equality and instead build a map of the key
@@ -253,12 +253,12 @@ func TestOutput(t *testing.T) {
 				logrusCaller, ok := logrusData["caller"].(string)
 				delete(logrusData, "caller")
 				assert.True(t, ok, "caller was missing from logrus output")
-				assert.Equal(t, "log/formatter_test.go:220", logrusCaller)
+				assert.Equal(t, "log/formatter_test.go:238", logrusCaller)
 
 				slogCaller, ok := slogData["caller"].(string)
 				delete(slogData, "caller")
 				assert.True(t, ok, "caller was missing from slog output")
-				assert.Equal(t, "log/formatter_test.go:224", slogCaller)
+				assert.Equal(t, "log/formatter_test.go:242", slogCaller)
 
 				require.Empty(t,
 					cmp.Diff(
