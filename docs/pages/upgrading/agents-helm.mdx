@@ -3,24 +3,19 @@ title: Upgrading Teleport Agents on Kubernetes
 description: Explains how to upgrade Teleport agents running on Kubernetes.
 ---
 
-This guide explains a manual approach to upgrading Teleport agents running on
-Kubernetes.
-
-For instructions on setting up Teleport agents to upgrade themselves
-automatically, read the following guides: {/*TODO: link to  the agent guides*/}
+This guide explains how to upgrade Teleport agents running on Kubernetes using a
+manual approach. 
 
 An agent is a `teleport` binary that runs services other than the Auth Service
 and Proxy Service, and proxies resources in your infrastructure. Examples
-include the Teleport SSH Service and Teleport Database Service.
-
-For an overview of how Teleport agents function within a Teleport cluster, read
-the [Teleport Agents](../agents/introduction.mdx) documentation.
+include the Teleport SSH Service and Teleport Database Service. (For more
+information on agents, read the [Teleport Agents](../agents/introduction.mdx)
+documentation.)
 
 ## Prerequisites
 
-{/*TODO: Talk about the upgrade sequence here. The Auth/Proxy should be
-upgraded first, I think. Link to the guides on upgrading these*/}
-
+- Familiarity with the [Upgrading Compatibility Overview](./overview.mdx) guide,
+  which describes the sequence in which to upgrade components of your cluster.
 - A running Teleport cluster with at least one agent deployed using the
   `teleport-kube-agent` Helm chart. 
 
@@ -42,3 +37,14 @@ Run the following commands to upgrade Teleport agents running on Kubernetes.
   ```code
   $ helm upgrade teleport-agent teleport-kube-agent --version=(=teleport.version=) --values=values.yaml
   ```
+
+## Next steps
+
+We recommend that Teleport users set up automatic agent upgrades, where agents
+query a **version server** in order to determine whether they are out of date
+and need to install a new version of Teleport. Read one of the following guides
+to set up automatic agent upgrades:
+
+- [Self-hosted Teleport clusters](./upgrading//self-hosted-automatic-agent-updates.mdx)
+- [Teleport Cloud](./upgrading//enroll-agent-into-automatic-updates.mdx)
+

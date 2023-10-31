@@ -1,19 +1,16 @@
 ---
-title: Upgrading the Auth Service and Proxy Service on Kubernetes
+title: Upgrading Self-Hosted Teleport Clusters on Kubernetes
 description: Explains how to upgrade the Teleport Auth Service and Proxy Service when self-hosting Teleport on Kubernetes
 ---
 
 This guide explains how to upgrade Teleport Auth Service and Proxy Service
 instances running on Kubernetes.
 
-{/*TODO: More context, e.g., what to do re: agents*/}
-
 ## Prerequisites
 
+- Familiarity with the [Upgrading Compatibility Overview](./overview.mdx) guide,
+  which describes the sequence in which to upgrade components of your cluster.
 - A Teleport cluster deployed with the `teleport-cluster` Helm chart. 
-- **Recommended:** A recent backup of your Teleport cluster state. Read the
-  [Backing up Teleport](../management/operations/backup-restore.mdx) guide for
-  backup instructions.
 
 This guide assumes that you have configured the `teleport-cluster` Helm chart
 with a values file called `values.yaml`, and that your `teleport-cluster`
@@ -59,4 +56,21 @@ of the Auth Service.
 
 ## Next steps
 
-{/*TODO: links to guides for upgrading agents*/}
+Now that you have upgraded the Auth Service and Proxy Service, you can upgrade
+the agents in your Teleport cluster.
+
+We recommend that Teleport users set up automatic agent upgrades, where agents
+query a **version server** in order to determine whether they are out of date
+and need to install a new version of Teleport. Read one of the following guides
+to set up automatic agent upgrades:
+
+- [Self-hosted Teleport clusters](./upgrading//self-hosted-automatic-agent-updates.mdx)
+- [Teleport Cloud](./upgrading//enroll-agent-into-automatic-updates.mdx)
+
+For special circumstances, you can also read about how to upgrade agents
+manually in your environment (the instructions are the same for self-hosted and
+Teleport Cloud clusters):
+
+- [Kubernetes](./upgrading/agents-helm.mdx)
+- [Linux Servers](./upgrading/agents-linux.mdx)
+

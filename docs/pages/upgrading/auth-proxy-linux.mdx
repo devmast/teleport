@@ -1,5 +1,5 @@
 ---
-title: Upgrading the Teleport Auth Service and Proxy Service on Linux
+title: Upgrading Self-Hosted Teleport Clusters on Linux
 description: Explains how to upgrade Teleport Auth Service and Proxy Service instances running on Linux servers.
 ---
 
@@ -8,17 +8,13 @@ for self-hosted Teleport deployments running on Linux servers.
 
 ## Prerequisites
 
-{/*TODO: Talk about the upgrade sequence here. The Auth/Proxy should be
-upgraded first, I think. Link to the guides on upgrading these*/}
-
+- Familiarity with the [Upgrading Compatibility Overview](./overview.mdx) guide,
+  which describes the sequence in which to upgrade components of your cluster.
 - A self-hosted Teleport cluster in which the Auth Service and Proxy Service run
   on Linux servers. Auth Service and Proxy Service instances must be running a
   previous version of Teleport.
-- **Recommended:** A recent backup of your Teleport cluster state. Read the
-  [Backing up Teleport](../management/operations/backup-restore.mdx) guide for
-  backup instructions.
 
-## Step 1/ . Install the latest Teleport version
+## Step 1/2. Install the latest Teleport version
 
 {/*TODO: intro paragraph re: how the below steps figure into upgrading
 Teleport*/}
@@ -154,12 +150,31 @@ $ sudo ./install
 </TabItem>
 </Tabs>
 
-## Step 2/ . Restart Teleport
+## Step 2/2. Restart Teleport
 
-{/*TODO: intro paragraph re: how the below steps figure into upgrading
-Teleport*/}
+Now that you have installed a more recent `teleport` binary on your Auth Service
+and Proxy Service servers, restart Teleport on these servers to run the new
+version.
 
 (!docs/pages/includes/start-teleport.mdx!)
 
-{/*TODO: consider including a Details box re: the SIGUSR2 instructions*/}
+## Next steps
+
+Now that you have upgraded the Auth Service and Proxy Service, you can upgrade
+the agents in your Teleport cluster.
+
+We recommend that Teleport users set up automatic agent upgrades, where agents
+query a **version server** in order to determine whether they are out of date
+and need to install a new version of Teleport. Read one of the following guides
+to set up automatic agent upgrades:
+
+- [Self-hosted Teleport clusters](./upgrading//self-hosted-automatic-agent-updates.mdx)
+- [Teleport Cloud](./upgrading//enroll-agent-into-automatic-updates.mdx)
+
+For special circumstances, you can also read about how to upgrade agents
+manually in your environment (the instructions are the same for self-hosted and
+Teleport Cloud clusters):
+
+- [Kubernetes](./upgrading/agents-helm.mdx)
+- [Linux Servers](./upgrading/agents-linux.mdx)
 
