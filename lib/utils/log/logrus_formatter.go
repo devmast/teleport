@@ -158,7 +158,7 @@ func (tf *TextFormatter) Format(e *log.Entry) ([]byte, error) {
 				color = gray
 			case log.InfoLevel:
 				level = "INFO"
-				color = gray
+				color = blue
 			case log.WarnLevel:
 				level = "WARN"
 				color = yellow

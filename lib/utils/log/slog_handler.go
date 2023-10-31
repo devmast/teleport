@@ -160,7 +160,7 @@ func (s *SlogTextHandler) Handle(ctx context.Context, r slog.Record) error {
 		color = gray
 	case slog.LevelInfo:
 		level = "INFO"
-		color = gray
+		color = blue
 	case slog.LevelWarn:
 		level = "WARN"
 		color = yellow

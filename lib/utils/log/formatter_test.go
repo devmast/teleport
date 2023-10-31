@@ -241,7 +241,7 @@ func TestOutput(t *testing.T) {
 				delete(slogData, "caller")
 				assert.True(t, ok, "caller was missing from slog output")
 				assert.Equal(t, "log/formatter_test.go:224", slogCaller)
-				
+
 				require.Empty(t,
 					cmp.Diff(
 						logrusData,
@@ -257,40 +257,8 @@ func TestOutput(t *testing.T) {
 func BenchmarkFormatter(b *testing.B) {
 	b.ReportAllocs()
 	b.Run("logrus", func(b *testing.B) {
-		b.Run("text_old_formatter", func(b *testing.B) {
-			formatter := utils.NewDefaultTextFormatter(true)
-			require.NoError(b, formatter.CheckAndSetDefaults())
-			logger := logrus.New()
-			logger.SetFormatter(formatter)
-			logger.SetOutput(io.Discard)
-			logger.ReplaceHooks(logrus.LevelHooks{})
-			b.ResetTimer()
-
-			entry := logger.WithField(trace.Component, "test")
-			for i := 0; i < b.N; i++ {
-				l := entry.WithField("test", 123).WithField("animal", "llama\n").WithField("error", logErr)
-				l.WithField("diag_addr", &addr).WithField(trace.ComponentFields, fields).Info(message)
-			}
-		})
-
 		b.Run("text", func(b *testing.B) {
 			formatter := NewDefaultTextFormatter(true)
-			require.NoError(b, formatter.CheckAndSetDefaults())
-			logger := logrus.New()
-			logger.SetFormatter(formatter)
-			logger.SetOutput(io.Discard)
-			logger.ReplaceHooks(logrus.LevelHooks{})
-			b.ResetTimer()
-
-			entry := logger.WithField(trace.Component, "test")
-			for i := 0; i < b.N; i++ {
-				l := entry.WithField("test", 123).WithField("animal", "llama\n").WithField("error", logErr)
-				l.WithField("diag_addr", &addr).WithField(trace.ComponentFields, fields).Info(message)
-			}
-		})
-
-		b.Run("json_old_formatter", func(b *testing.B) {
-			formatter := &utils.JSONFormatter{}
 			require.NoError(b, formatter.CheckAndSetDefaults())
 			logger := logrus.New()
 			logger.SetFormatter(formatter)
