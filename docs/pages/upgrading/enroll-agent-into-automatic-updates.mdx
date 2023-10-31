@@ -3,40 +3,37 @@ title: Enroll an agent into automatic updates
 description: How to enroll an agent into automatic updates
 ---
 
-<Details
-  title="Version warning"
-  opened={true}
-  min="13.0"
->
-  Automatic agent update is available starting from Teleport `13.0`.
-</Details>
-
-Teleport supports automatic agent updates for
-systemd-based Linux distributions using `apt`, `yum`, or `zypper` package
-managers, and Kubernetes clusters. The [automatic updates architecture
+Teleport supports automatic agent updates for systemd-based Linux distributions
+using `apt`, `yum`, or `zypper` package managers, and Kubernetes clusters. The
+[automatic updates architecture
 page](../../architecture/agent-update-management.mdx) describes how agent
 updating works.
 
 This guide explains how to enroll an existing Teleport agent into automatic
 updates.
 
-## Requirements
+## Prerequisites
+
+- Familiarity with the [Upgrading Compatibility Overview](./overview.mdx) guide,
+  which describes the sequence in which to upgrade components of your cluster.
 
 <Tabs>
-<TabItem label="Self-hosted" scope="enterprise">
+<TabItem label="Self-Hosted">
+- A self-hosted Teleport cluster running version 13.0 or above. 
 - A Teleport Enterprise agent, either:
   - started via systemd on a distribution using the `apt` or `yum` package managers
   - deployed with the `teleport-kube-agent` Helm chart
-- automatic update infrastructure set up. For Self-Hosted users this means you
-  already followed [this guide](./self-hosted-automatic-agent-updates.mdx) and
-  know your version server URL and release channel
+- Automatic update infrastructure set up. For self-hosted Teleport deployments,
+  this means you must follow  [Set up Self-Hosted Automatic Agent Updates 
+](./self-hosted-automatic-agent-updates.mdx) and know your version server
+  URL and release channel.
 </TabItem>
-<TabItem label="Teleport Cloud" scope="cloud">
+<TabItem label="Teleport Cloud">
 - A Teleport Enterprise agent, either:
   - started via systemd on a distribution using the `apt` or `yum` package managers
   - deployed with the `teleport-kube-agent` Helm chart
-- as a Teleport Cloud user, you must check if your Cloud Tenant is enrolled
-  into automatic updates.
+- As a Teleport Cloud user, you must check if your Teleport Cloud account is
+  enrolled into automatic updates.
 </TabItem>
 </Tabs>
 
