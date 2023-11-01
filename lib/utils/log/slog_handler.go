@@ -36,11 +36,19 @@ const TraceLevel = slog.LevelDebug - 1
 // SlogTextHandler is a [slog.Handler] that outputs messages in a textual
 // manner as configured by the Teleport configuration.
 type SlogTextHandler struct {
-	level          slog.Leveler
-	enableColors   bool
-	component      string
-	preformatted   []byte   // data from WithGroup and WithAttrs
-	unopenedGroups []string // groups from WithGroup that haven't been opened
+	cfg       SlogTextHandlerConfig
+	component string
+	// preformatted data from previous calls to WithGroup and WithAttrs.
+	preformatted []byte
+	// groupPrefix is for the text handler only.
+	// It holds the prefix for groups that were already pre-formatted.
+	// A group will appear here when a call to WithGroup is followed by
+	// a call to WithAttrs.
+	groupPrefix buffer
+	// groups passed in via WithGroup and WithAttrs.
+	groups []string
+	// nOpenGroups the number of groups opened in preformatted.
+	nOpenGroups int
 
 	// mu protects out - it needs to be a pointer so that all cloned
 	// SlogTextHandler returned from WithAttrs and WithGroup share the
@@ -51,22 +59,60 @@ type SlogTextHandler struct {
 	out io.Writer
 }
 
+// SlogTextHandlerConfig allow the SlogTextHandler functionality
+// to be tweaked.
+type SlogTextHandlerConfig struct {
+	// Level is the minimum record level that will be logged.
+	Level slog.Leveler
+	// EnableColors allows the level to be printed in color.
+	EnableColors bool
+	// Padding to use for various components.
+	Padding int
+	// WithCaller indicates whether the source of the log should be
+	// included in output.
+	WithCaller bool
+	// ReplaceAttr is called to rewrite each non-group attribute before
+	// it is logged.
+	ReplaceAttr func(groups []string, a slog.Attr) slog.Attr
+}
+
 // NewSlogTextHandler creates a SlogTextHandler that writes messages to w.
-func NewSlogTextHandler(w io.Writer, level slog.Leveler, enableColors bool) *SlogTextHandler {
+func NewSlogTextHandler(w io.Writer, cfg *SlogTextHandlerConfig) *SlogTextHandler {
+	if cfg == nil {
+		cfg = &SlogTextHandlerConfig{}
+	}
+
+	if cfg.Padding == 0 {
+		cfg.Padding = trace.DefaultComponentPadding
+	}
+
 	return &SlogTextHandler{
-		level:        level,
-		enableColors: enableColors,
-		out:          w,
-		mu:           &sync.Mutex{},
+		cfg: *cfg,
+		out: w,
+		mu:  &sync.Mutex{},
 	}
 }
 
 // Enabled returns whether the provided level will be included in output.
 func (s *SlogTextHandler) Enabled(ctx context.Context, level slog.Level) bool {
-	return level >= s.level.Level()
+	minLevel := slog.LevelInfo
+	if s.cfg.Level != nil {
+		minLevel = s.cfg.Level.Level()
+	}
+	return level >= minLevel
 }
 
 func (s *SlogTextHandler) appendAttr(buf []byte, a slog.Attr) []byte {
+	if rep := s.cfg.ReplaceAttr; rep != nil && a.Value.Kind() != slog.KindGroup {
+		var gs []string
+		if s.groups != nil {
+			gs = s.groups
+		}
+		// Resolve before calling ReplaceAttr, so the user doesn't have to.
+		a.Value = a.Value.Resolve()
+		a = rep(gs, a)
+	}
+
 	// Resolve the Attr's value before doing anything else.
 	a.Value = a.Value.Resolve()
 	// Ignore empty Attrs.
@@ -77,11 +123,16 @@ func (s *SlogTextHandler) appendAttr(buf []byte, a slog.Attr) []byte {
 	switch a.Value.Kind() {
 	case slog.KindString:
 		value := a.Value.String()
+		if a.Key == slog.TimeKey {
+			buf = fmt.Append(buf, value)
+			break
+		}
+
 		if needsQuoting(value) {
 			if a.Key == trace.Component || a.Key == slog.LevelKey || a.Key == "caller" || a.Key == slog.MessageKey {
 				buf = fmt.Append(buf, " ")
 			} else {
-				buf = fmt.Appendf(buf, " %s:", a.Key)
+				buf = fmt.Appendf(buf, " %s%s:", s.groupPrefix, a.Key)
 			}
 			buf = strconv.AppendQuote(buf, value)
 			break
@@ -92,7 +143,7 @@ func (s *SlogTextHandler) appendAttr(buf []byte, a slog.Attr) []byte {
 			break
 		}
 
-		buf = fmt.Appendf(buf, " %s:%s", a.Key, a.Value.String())
+		buf = fmt.Appendf(buf, " %s%s:%s", s.groupPrefix, a.Key, a.Value.String())
 	case slog.KindGroup:
 		attrs := a.Value.Group()
 		// Ignore empty groups.
@@ -102,10 +153,17 @@ func (s *SlogTextHandler) appendAttr(buf []byte, a slog.Attr) []byte {
 		// If the key is non-empty, write it out and indent the rest of the attrs.
 		// Otherwise, inline the attrs.
 		if a.Key != "" {
-			buf = fmt.Appendf(buf, " %s:", a.Key)
+			s.groupPrefix = fmt.Append(s.groupPrefix, a.Key)
+			s.groupPrefix = fmt.Append(s.groupPrefix, ".")
 		}
 		for _, ga := range attrs {
 			buf = s.appendAttr(buf, ga)
+		}
+		if a.Key != "" {
+			s.groupPrefix = s.groupPrefix[:len(s.groupPrefix)-len(a.Key)-1 /* for keyComponentSep */]
+			if s.groups != nil {
+				s.groups = (s.groups)[:len(s.groups)-1]
+			}
 		}
 	default:
 		switch err := a.Value.Any().(type) {
@@ -161,7 +219,11 @@ func (s *SlogTextHandler) Handle(ctx context.Context, r slog.Record) error {
 	defer buf.Free()
 
 	if !r.Time.IsZero() {
-		writeTimeRFC3339(buf, r.Time)
+		if s.cfg.ReplaceAttr != nil {
+			*buf = s.appendAttr(*buf, slog.Time(slog.TimeKey, r.Time))
+		} else {
+			writeTimeRFC3339(buf, r.Time)
+		}
 	}
 
 	var color int
@@ -190,7 +252,7 @@ func (s *SlogTextHandler) Handle(ctx context.Context, r slog.Record) error {
 		level = r.Level.String()
 	}
 
-	if !s.enableColors {
+	if !s.cfg.EnableColors {
 		color = noColor
 	}
 
@@ -208,14 +270,20 @@ func (s *SlogTextHandler) Handle(ctx context.Context, r slog.Record) error {
 	// Insert preformatted attributes just after built-in ones.
 	*buf = append(*buf, s.preformatted...)
 	if r.NumAttrs() > 0 {
-		*buf = s.appendUnopenedGroups(*buf)
+		if len(s.groups) > 0 {
+			for _, n := range s.groups[s.nOpenGroups:] {
+				s.groupPrefix = fmt.Append(s.groupPrefix, n)
+				s.groupPrefix = fmt.Append(s.groupPrefix, ".")
+			}
+		}
+
 		r.Attrs(func(a slog.Attr) bool {
 			*buf = s.appendAttr(*buf, a)
 			return true
 		})
 	}
 
-	if r.PC != 0 {
+	if r.PC != 0 && s.cfg.WithCaller {
 		fs := runtime.CallersFrames([]uintptr{r.PC})
 		f, _ := fs.Next()
 
@@ -228,6 +296,8 @@ func (s *SlogTextHandler) Handle(ctx context.Context, r slog.Record) error {
 		file, line := getCaller(slog.Attr{Key: slog.SourceKey, Value: slog.AnyValue(src)})
 		*buf = fmt.Appendf(*buf, " %s:%d", file, line)
 	}
+
+	buf.WriteByte('\n')
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -243,12 +313,20 @@ func (s *SlogTextHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 		return s
 	}
 	s2 := *s
-	// Force an append to copy the underlying array.
-	pre := slices.Clip(s.preformatted)
-	// Add all groups from WithGroup that haven't already been added.
-	s2.preformatted = s2.appendUnopenedGroups(pre)
+	// Force an append to copy the underlying arrays.
+	s2.preformatted = slices.Clip(s.preformatted)
+	s2.groups = slices.Clip(s.groups)
+
+	// Add all groups from WithGroup that haven't already been added to the prefix.
+	if len(s.groups) > 0 {
+		for _, n := range s.groups[s.nOpenGroups:] {
+			s2.groupPrefix = fmt.Append(s2.groupPrefix, n)
+			s2.groupPrefix = fmt.Append(s2.groupPrefix, ".")
+		}
+	}
+
 	// Now all groups have been opened.
-	s2.unopenedGroups = nil
+	s2.nOpenGroups = len(s2.groups)
 
 	component := s.component
 
@@ -256,9 +334,8 @@ func (s *SlogTextHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	for _, a := range attrs {
 		switch a.Key {
 		case trace.Component:
-			const padding = trace.DefaultComponentPadding
 			component = fmt.Sprintf("[%v]", a.Value.String())
-			component = strings.ToUpper(padMax(component, padding))
+			component = strings.ToUpper(padMax(component, s.cfg.Padding))
 			if component[len(component)-1] != ' ' {
 				component = component[:len(component)-1] + "]"
 			}
@@ -277,15 +354,12 @@ func (s *SlogTextHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 			s2.preformatted = s2.appendAttr(s2.preformatted, a)
 		}
 	}
-	s2.component = component
-	return &s2
-}
 
-func (s *SlogTextHandler) appendUnopenedGroups(buf []byte) []byte {
-	for _, g := range s.unopenedGroups {
-		buf = fmt.Appendf(buf, "%s:", g)
-	}
-	return buf
+	s2.component = component
+	// Remember how many opened groups are in preformattedAttrs,
+	// so we don't open them again when we handle a Record.
+	s2.nOpenGroups = len(s2.groups)
+	return &s2
 }
 
 // WithGroup opens a new group.
@@ -295,10 +369,7 @@ func (s *SlogTextHandler) WithGroup(name string) slog.Handler {
 	}
 
 	s2 := *s
-	// Add an unopened group to h2 without modifying h.
-	s2.unopenedGroups = make([]string, len(s.unopenedGroups)+1)
-	copy(s2.unopenedGroups, s.unopenedGroups)
-	s2.unopenedGroups[len(s2.unopenedGroups)-1] = name
+	s2.groups = append(s2.groups, name)
 	return &s2
 }
 
@@ -339,8 +410,13 @@ func NewSlogJSONHandler(w io.Writer, level slog.Leveler) *SlogJSONHandler {
 
 					a.Value = slog.StringValue(level)
 				case slog.TimeKey:
+					t := a.Value.Time()
+					if t.IsZero() {
+						return a
+					}
+
 					a.Key = "timestamp"
-					a.Value = slog.StringValue(a.Value.Time().Format(time.RFC3339))
+					a.Value = slog.StringValue(t.Format(time.RFC3339))
 				case slog.MessageKey:
 					a.Key = "message"
 				case slog.SourceKey:

@@ -139,7 +139,12 @@ func TestOutput(t *testing.T) {
 
 				// Create a slog logger using the custom handler which outputs to a local buffer.
 				var slogOutput bytes.Buffer
-				slogLogger := slog.New(NewSlogTextHandler(&slogOutput, test.slogLevel, true)).With(trace.Component, "test")
+				slogConfig := &SlogTextHandlerConfig{
+					Level:        test.slogLevel,
+					EnableColors: true,
+					WithCaller:   true,
+				}
+				slogLogger := slog.New(NewSlogTextHandler(&slogOutput, slogConfig)).With(trace.Component, "test")
 
 				// Add some fields and output the message at the desired log level via logrus.
 				l := entry.WithField("test", 123).WithField("animal", "llama\n").WithField("error", logErr)
@@ -170,8 +175,8 @@ func TestOutput(t *testing.T) {
 				// Match the log message: "Adding diagnostic debugging handlers.\t To connect with profiler, use `go tool pprof diag_addr`.\n"
 				assert.Empty(t, cmp.Diff(logrusMatches[3], slogMatches[3]), "expected output messages to be identical")
 				// The last matches are the caller information
-				assert.Equal(t, " log/formatter_test.go:146", logrusMatches[5])
-				assert.Equal(t, " log/formatter_test.go:150", slogMatches[5])
+				assert.Equal(t, " log/formatter_test.go:151", logrusMatches[5])
+				assert.Equal(t, " log/formatter_test.go:155", slogMatches[5])
 
 				// The third matches are the fields which will be key value pairs(animal:llama) separated by a space. Since
 				// logrus sorts the fields and slog doesn't we can't just assert equality and instead build a map of the key
@@ -274,12 +279,12 @@ func TestOutput(t *testing.T) {
 				logrusCaller, ok := logrusData["caller"].(string)
 				delete(logrusData, "caller")
 				assert.True(t, ok, "caller was missing from logrus output")
-				assert.Equal(t, "log/formatter_test.go:259", logrusCaller)
+				assert.Equal(t, "log/formatter_test.go:264", logrusCaller)
 
 				slogCaller, ok := slogData["caller"].(string)
 				delete(slogData, "caller")
 				assert.True(t, ok, "caller was missing from slog output")
-				assert.Equal(t, "log/formatter_test.go:263", slogCaller)
+				assert.Equal(t, "log/formatter_test.go:268", slogCaller)
 
 				require.Empty(t,
 					cmp.Diff(
@@ -345,7 +350,7 @@ func BenchmarkFormatter(b *testing.B) {
 		})
 
 		b.Run("text", func(b *testing.B) {
-			logger := slog.New(NewSlogTextHandler(io.Discard, slog.LevelDebug, true)).With(trace.Component, "test")
+			logger := slog.New(NewSlogTextHandler(io.Discard, &SlogTextHandlerConfig{Level: slog.LevelDebug, EnableColors: true})).With(trace.Component, "test")
 			b.ResetTimer()
 
 			for i := 0; i < b.N; i++ {
