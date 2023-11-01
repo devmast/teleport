@@ -130,16 +130,16 @@ func TestOutput(t *testing.T) {
 				formatter.timestampEnabled = true
 				require.NoError(t, formatter.CheckAndSetDefaults())
 
-				logger := logrus.New()
-				logger.SetFormatter(formatter)
-				logger.SetOutput(&logrusOutput)
-				logger.ReplaceHooks(logrus.LevelHooks{})
-				logger.SetLevel(test.logrusLevel)
-				entry := logger.WithField(trace.Component, "test")
+				logrusLogger := logrus.New()
+				logrusLogger.SetFormatter(formatter)
+				logrusLogger.SetOutput(&logrusOutput)
+				logrusLogger.ReplaceHooks(logrus.LevelHooks{})
+				logrusLogger.SetLevel(test.logrusLevel)
+				entry := logrusLogger.WithField(trace.Component, "test")
 
 				// Create a slog logger using the custom handler which outputs to a local buffer.
 				var slogOutput bytes.Buffer
-				slogLogger := slog.New(NewSLogTextHandler(&slogOutput, test.slogLevel, true)).With(trace.Component, "test")
+				slogLogger := slog.New(NewSlogTextHandler(&slogOutput, test.slogLevel, true)).With(trace.Component, "test")
 
 				// Add some fields and output the message at the desired log level via logrus.
 				l := entry.WithField("test", 123).WithField("animal", "llama\n").WithField("error", logErr)
@@ -243,12 +243,12 @@ func TestOutput(t *testing.T) {
 				}
 				require.NoError(t, formatter.CheckAndSetDefaults())
 
-				logger := logrus.New()
-				logger.SetFormatter(formatter)
-				logger.SetOutput(&logrusOut)
-				logger.ReplaceHooks(logrus.LevelHooks{})
-				logger.SetLevel(test.logrusLevel)
-				entry := logger.WithField(trace.Component, "test")
+				logrusLogger := logrus.New()
+				logrusLogger.SetFormatter(formatter)
+				logrusLogger.SetOutput(&logrusOut)
+				logrusLogger.ReplaceHooks(logrus.LevelHooks{})
+				logrusLogger.SetLevel(test.logrusLevel)
+				entry := logrusLogger.WithField(trace.Component, "test")
 
 				// Create a slog logger using the custom formatter which outputs to a local buffer.
 				var slogOutput bytes.Buffer
@@ -345,7 +345,7 @@ func BenchmarkFormatter(b *testing.B) {
 		})
 
 		b.Run("text", func(b *testing.B) {
-			logger := slog.New(NewSLogTextHandler(io.Discard, slog.LevelDebug, true)).With(trace.Component, "test")
+			logger := slog.New(NewSlogTextHandler(io.Discard, slog.LevelDebug, true)).With(trace.Component, "test")
 			b.ResetTimer()
 
 			for i := 0; i < b.N; i++ {

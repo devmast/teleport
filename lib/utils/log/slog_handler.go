@@ -41,12 +41,18 @@ type SlogTextHandler struct {
 	component      string
 	preformatted   []byte   // data from WithGroup and WithAttrs
 	unopenedGroups []string // groups from WithGroup that haven't been opened
-	mu             *sync.Mutex
-	out            io.Writer
+
+	// mu protects out - it needs to be a pointer so that all cloned
+	// SlogTextHandler returned from WithAttrs and WithGroup share the
+	// same mutex. Otherwise, output may be garbled since each clone
+	// will use its own copy of the mutex to protect out. See
+	// https://github.com/golang/go/issues/61321 for more details.
+	mu  *sync.Mutex
+	out io.Writer
 }
 
-// NewSLogTextHandler creates a SlogTextHandler that writes messages to w.
-func NewSLogTextHandler(w io.Writer, level slog.Leveler, enableColors bool) *SlogTextHandler {
+// NewSlogTextHandler creates a SlogTextHandler that writes messages to w.
+func NewSlogTextHandler(w io.Writer, level slog.Leveler, enableColors bool) *SlogTextHandler {
 	return &SlogTextHandler{
 		level:        level,
 		enableColors: enableColors,
@@ -299,13 +305,13 @@ func (s *SlogTextHandler) WithGroup(name string) slog.Handler {
 // SlogJSONHandler is a [slog.Handler] that outputs messages in a json
 // format per the config file.
 type SlogJSONHandler struct {
-	handler *slog.JSONHandler
+	*slog.JSONHandler
 }
 
 // NewSlogJSONHandler creates a SlogJSONHandler that outputs to w.
 func NewSlogJSONHandler(w io.Writer, level slog.Leveler) *SlogJSONHandler {
 	return &SlogJSONHandler{
-		handler: slog.NewJSONHandler(w, &slog.HandlerOptions{
+		JSONHandler: slog.NewJSONHandler(w, &slog.HandlerOptions{
 			AddSource: true,
 			Level:     level,
 			ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
@@ -348,6 +354,9 @@ func NewSlogJSONHandler(w io.Writer, level slog.Leveler) *SlogJSONHandler {
 	}
 }
 
+// getCaller retrieves source information from the attribute
+// and returns the file and line of the caller. The file is
+// truncated from the absolute path to package/filename.
 func getCaller(a slog.Attr) (file string, line int) {
 	s := a.Value.Any().(*slog.Source)
 	count := 0
@@ -361,26 +370,5 @@ func getCaller(a slog.Attr) (file string, line int) {
 	file = s.File[idx+1:]
 	line = s.Line
 
-	return
-}
-
-// Enabled returns whether the provided level will be included in output.
-func (s *SlogJSONHandler) Enabled(ctx context.Context, level slog.Level) bool {
-	return s.handler.Enabled(ctx, level)
-}
-
-// Handle formats the record and produces a message that is written to the destination.
-func (s *SlogJSONHandler) Handle(ctx context.Context, record slog.Record) error {
-	return s.handler.Handle(ctx, record)
-}
-
-// WithAttrs returns a new JSONHandler whose attributes consists
-// of s's attributes followed by attrs.
-func (s *SlogJSONHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
-	return s.handler.WithAttrs(attrs)
-}
-
-// WithGroup returns a new JSONHandler that has a new group opened.
-func (s *SlogJSONHandler) WithGroup(name string) slog.Handler {
-	return s.handler.WithGroup(name)
+	return file, line
 }
