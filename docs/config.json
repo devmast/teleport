@@ -607,10 +607,6 @@
               "slug": "/management/admin/troubleshooting/"
             },
             {
-              "title": "Upgrading the Teleport Binary",
-              "slug": "/management/admin/upgrading-the-teleport-binary/"
-            },
-            {
               "title": "Run Teleport as a Daemon",
               "slug": "/management/admin/daemon/"
             },
@@ -2135,11 +2131,6 @@
       "permanent": true
     },
     {
-      "source": "/setup/admin/graceful-restarts/",
-      "destination": "/management/admin/upgrading-the-teleport-binary/",
-      "permanent": true
-    },
-    {
       "source": "/enterprise/workflow/",
       "destination": "/access-controls/access-requests/",
       "permanent": true
@@ -2402,11 +2393,6 @@
     {
       "source": "/setup/admin/trustedclusters/",
       "destination": "/management/admin/trustedclusters/",
-      "permanent": true
-    },
-    {
-      "source": "/setup/admin/upgrading-the-teleport-binary/",
-      "destination": "/management/admin/upgrading-the-teleport-binary/",
       "permanent": true
     },
     {
