@@ -13,14 +13,18 @@ Since Teleport is a distributed system with a number of services that run on
 potentially many hosts, you should take care when upgrading the cluster to
 ensure that all components remain compatible.
 
-The [Upgrading Compatibility Overview](./upgrading/overview.mdx) guide provides
-an overview of how to upgrade the components in your Teleport cluster while
-preserving compatibility.
+The [Upgrading Compatibility Overview](./upgrading/overview.mdx) explains how to
+upgrade components in your Teleport cluster to ensure that they communicate as
+expected.
 
 ## Upgrading self-hosted clusters
 
-After reading the Upgrading Overview, self-hosted Teleport administrators should
-follow one of the guides below to upgrade the Auth Service and Proxy Service:
+If you run a self-hosted edition of Teleport (Enterprise and Community Edition),
+you will need to upgrade the Auth Service and Proxy Service. 
+
+After getting familiar with the Compatibility Overview, follow one of the guides
+below to upgrade the Auth Service and Proxy Service, depending on the platform
+in which you installed these services:
 
 - [Kubernetes](./upgrading/auth-proxy-helm.mdx)
 - [Linux Servers](./upgrading/auth-proxy-linux.mdx)
@@ -43,8 +47,7 @@ Teleport agents to query the version server and install new versions of Teleport
 when they fall out of date.
 
 For special circumstances, you can also read about how to upgrade agents
-manually in your environment (the instructions are the same for self-hosted and
-Teleport Cloud clusters):
+manually in your environment:
 
 - [Kubernetes](./upgrading/agents-helm.mdx)
 - [Linux Servers](./upgrading/agents-linux.mdx)
