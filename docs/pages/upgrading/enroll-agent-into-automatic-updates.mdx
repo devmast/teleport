@@ -70,37 +70,6 @@ Server ID                            Hostname        Services Version Upgrader
 <Tabs>
 <TabItem label="teleport-kube-agent chart" scope="enterprise">
 
-Confirm you are using the Teleport Enterprise image. The `enterprise` value setting
-should have been set to `true` for the Helm chart installation.
-
-Add the following chart values to your existing agent `values.yaml`:
-
-```yaml
-updater:
-  enabled: true
-  versionServer: https://<version-server-domain-and-path>
-  releaseChannel: <release-channel>
-```
-
-Update the Helm chart release with the new values by running `helm upgrade`.
-
-You can validate the updater is running properly by checking if its pod is ready:
-
-```code
-$ kubectl get pods
-NAME                               READY   STATUS    RESTARTS   AGE
-<your-agent-release>-0                         1/1     Running   0          14m
-<your-agent-release>-1                         1/1     Running   0          14m
-<your-agent-release>-2                         1/1     Running   0          14m
-<your-agent-release>-updater-d9f97f5dd-v57g9   1/1     Running   0          16m
-```
-
-And by consulting its logs:
-
-```code
-$ kubectl logs deployment/<your-agent-release>-updater
-2023-04-28T13:13:30Z	INFO	StatefulSet is already up-to-date, not updating.	{"controller": "statefulset", "controllerGroup": "apps", "controllerKind": "StatefulSet", "StatefulSet": {"name":"my-agent","namespace":"agent"}, "namespace": "agent", "name": "my-agent", "reconcileID": "10419f20-a4c9-45d4-a16f-406866b7fc05", "namespacedname": "agent/my-agent", "kind": "StatefulSet", "err": "no new version (current: \"v12.2.3\", next: \"v12.2.3\")"}
-```
 
 </TabItem>
 </Tabs>
@@ -214,6 +183,8 @@ $ sudo teleport-upgrade run
 
 </TabItem>
 <TabItem label="teleport-kube-agent chart">
+
+{/*TODO: delete this tab item after copying it to the Kubernetes/Cloud guide*/}
 
 Consult the `teleport-kube-agent-updater` logs:
 

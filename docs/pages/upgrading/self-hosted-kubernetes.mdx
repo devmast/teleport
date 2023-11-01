@@ -1,0 +1,145 @@
+---
+title: Upgrade Self-Hosted Teleport Clusters on Kubernetes
+description: Provides instructions for upgrading self-hosted Teleport clusters that run on Kubernetes. 
+---
+
+This guide explains how to upgrade self-hosted Teleport clusters running on
+Kubernetes servers.
+
+## Prerequisites
+
+- Familiarity with the [Upgrading Compatibility Overview](./overview.mdx) guide,
+  which describes the sequence in which to upgrade components of your cluster.
+
+- A self-hosted Teleport cluster in which the Auth Service and Proxy Service run
+  on Kubernetes. This means that you will have installed the `teleport-cluster`
+  Helm chart. The Auth Service and Proxy Service instances must be running a
+  previous version of Teleport.
+
+Teleport supports automatic agent updates for the `teleport-kube-agent` Helm
+chart. The [Automatic Update Architecture
+](../../architecture/agent-update-management.mdx) guide describes how agent
+updating works. Automatic agent upgrades require:
+
+- A Teleport cluster running version 13.0 or above.
+
+- At least one Teleport Enterprise agent deployed via the `teleport-kube-agent`
+  Helm chart.
+
+- A **version server** in your infrastructure that agents can query in order to
+  upgrade themselves. Read [Set up Automatic Upgrade
+  Infrastructure](./self-hosted-automatic-agent-updates.mdx).
+
+This guide assumes that you have configured the `teleport-cluster` Helm chart
+with a values file called `values.yaml`, and that your `teleport-cluster`
+release is called `teleport-cluster`.
+
+## Step 1/ . Shrink the Auth Service pool
+
+You must reduce the number of Auth Service instances to one in order to ensure a
+consistent cluster state and enable the Auth Service to perform any data
+migrations.
+
+Ensure that your `teleport-cluster` values file includes the followinmg
+configuration:
+
+```yaml
+auth:
+  highAvailability:
+    replicaCount: 1
+```
+
+Once the upgrade is finished, you can configure your cluster for high
+availability again.
+
+## Step 2/ . Upgrade the Auth Service and Proxy Service
+
+Run the following commands to upgrade Auth Service and Proxy Service instances
+running on Kubernetes.
+
+1. Update the Teleport Helm chart repository so you can install the latest
+   version of the `teleport-cluster` chart:
+
+  (!docs/pages//kubernetes-access/helm/includes/helm-repo-add.mdx!)
+
+1. Upgrade the Helm release:
+
+  ```code
+  $ helm upgrade teleport-cluster teleport-cluster --version=(=teleport.version=) --values=values.yaml
+  ```
+
+The `teleport-cluster` Helm chart automatically waits for the previous version
+of the Proxy Service to stop responding to requests before running a new version
+of the Auth Service.
+
+
+## Step 3/ . Enroll agents in automatic upgrades
+
+1. Confirm you are using the Teleport Enterprise image. The `enterprise` value
+   setting should have been set to `true` for the Helm chart installation.
+
+1. Add the following chart values to your existing agent `values.yaml`:
+
+   ```yaml
+   updater:
+     enabled: true
+     versionServer: https://<version-server-domain-and-path>
+     releaseChannel: <release-channel>
+   ```
+
+1. Update the Helm chart release with the new values by running `helm upgrade`.
+
+1. You can validate the updater is running properly by checking if its pod is ready:
+
+   ```code
+   $ kubectl get pods
+   NAME                               READY   STATUS    RESTARTS   AGE
+   <your-agent-release>-0                         1/1     Running   0          14m
+   <your-agent-release>-1                         1/1     Running   0          14m
+   <your-agent-release>-2                         1/1     Running   0          14m
+   <your-agent-release>-updater-d9f97f5dd-v57g9   1/1     Running   0          16m
+   ```
+   
+   And by consulting its logs:
+   
+   ```code
+   $ kubectl logs deployment/<your-agent-release>-updater
+   2023-04-28T13:13:30Z	INFO	StatefulSet is already up-to-date, not updating.	{"controller": "statefulset", "controllerGroup": "apps", "controllerKind": "StatefulSet", "StatefulSet": {"name":"my-agent","namespace":"agent"}, "namespace": "agent", "name": "my-agent", "reconcileID": "10419f20-a4c9-45d4-a16f-406866b7fc05", "namespacedname": "agent/my-agent", "kind": "StatefulSet", "err": "no new version (current: \"v12.2.3\", next: \"v12.2.3\")"}
+   ```
+
+If the agent is not automatically upgraded, consult the
+`teleport-kube-agent-updater` logs:
+
+```code
+$ kubectl logs deployment/<your-agent-release>-updater
+```
+
+<Admonition type="note">
+The Kubernetes updater responds to events, or is woken up every 30 minutes.
+If you don't want to wait until the next reconciliation, you can trigger an
+event. Any deployment update will send an event, so the updater can be
+triggered by annotating the resource:
+
+```code
+kubectl annotate statefulset/<your-agent-release> 'debug.teleport.dev/trigger-event=1'
+```
+
+To suspend automatic upgrades for an agent, annotate the agent deployment with
+`teleport.dev/skipreconcile: "true"`.  Either by setting the
+`annotations.deployment` value in Helm, or by patching the deployment directly
+with `kubectl`.
+
+## Manually upgrading agents
+
+Run the following commands to upgrade Teleport agents running on Kubernetes.
+
+1. Update the Teleport Helm chart repository so you can install the latest
+   version of the `teleport-kube-agent` chart:
+
+  (!docs/pages//kubernetes-access/helm/includes/helm-repo-add.mdx!)
+
+1. Upgrade the Helm release:
+
+  ```code
+  $ helm upgrade teleport-agent teleport-kube-agent --version=(=teleport.version=) --values=values.yaml
+  ```
