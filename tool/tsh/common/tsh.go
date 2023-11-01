@@ -2862,7 +2862,15 @@ func serializeDatabasesAllClusters(dbListings []databaseListing, format string) 
 	return string(out), trace.Wrap(err)
 }
 
-func formatUsersForDB(database types.Database, accessChecker services.AccessChecker) string {
+func formatUsersForDB(database types.Database, accessChecker services.AccessChecker) (users string) {
+	// When auto-user provisioning is enabled, only username is allowed. `tsh
+	// db ls` will add a footnote for "(+)" to explain this.
+	if database.SupportsAutoUsers() && database.GetAdminUser().Name != "" {
+		defer func() {
+			users = users + " (+)"
+		}()
+	}
+
 	// may happen if fetching the role set failed for any reason.
 	if accessChecker == nil {
 		return "(unknown)"
@@ -2933,6 +2941,7 @@ func getDatabaseRow(proxy, cluster, clusterFlag string, database types.Database,
 
 func showDatabasesAsText(w io.Writer, clusterFlag string, databases []types.Database, active []tlsca.RouteToDatabase, accessChecker services.AccessChecker, verbose bool) {
 	var rows [][]string
+	var autoUser bool
 	for _, database := range databases {
 		rows = append(rows, getDatabaseRow("", "",
 			clusterFlag,
@@ -2940,6 +2949,10 @@ func showDatabasesAsText(w io.Writer, clusterFlag string, databases []types.Data
 			active,
 			accessChecker,
 			verbose))
+
+		if database.SupportsAutoUsers() && database.GetAdminUser().Name != "" {
+			autoUser = true
+		}
 	}
 	var t asciitable.Table
 	if verbose {
@@ -2947,7 +2960,11 @@ func showDatabasesAsText(w io.Writer, clusterFlag string, databases []types.Data
 	} else {
 		t = asciitable.MakeTableWithTruncatedColumn([]string{"Name", "Description", "Allowed Users", "Labels", "Connect"}, rows, "Labels")
 	}
+
 	fmt.Fprintln(w, t.AsBuffer().String())
+	if autoUser {
+		fmt.Fprintln(w, `(+) Automatic User Provisioning is enabled for the database. Only your username is allowed as --db-user. See https://goteleport.com/docs/database-access/auto-user-provisioning/ for more details.`)
+	}
 }
 
 func printDatabasesWithClusters(clusterFlag string, dbListings []databaseListing, active []tlsca.RouteToDatabase, verbose bool) {
