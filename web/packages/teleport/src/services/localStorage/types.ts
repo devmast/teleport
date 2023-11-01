@@ -30,6 +30,7 @@ export const KeysEnum = {
     'grv_teleport_unified_resources_not_supported',
   ACCESS_GRAPH_SEARCH_MODE: 'grv_teleport_access_graph_search_mode',
   ACCESS_GRAPH_QUERY: 'grv_teleport_access_graph_query',
+  ACCESS_GRAPH_ENABLED: 'grv_teleport_access_graph_enabled',
 };
 
 // SurveyRequest is the request for sending data to the back end
