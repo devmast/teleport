@@ -235,9 +235,8 @@ func (a *App) onWatcherEvent(ctx context.Context, event types.Event) error {
 }
 
 func (a *App) onPendingRequest(ctx context.Context, req types.AccessRequest) error {
-	log := logger.Get(ctx)
-
 	reqID := req.GetName()
+	log := log.WithField("reqId", reqID)
 
 	resourceNames, err := a.BaseApp.GetResourceNames(ctx, req)
 	if err != nil {
@@ -269,7 +268,7 @@ func (a *App) onPendingRequest(ctx context.Context, req types.AccessRequest) err
 		return nil
 	}
 
-	log.Infof("Creating servicenow incident for : %v", reqID)
+	log.Infof("Creating servicenow incident for: %v", reqID)
 	if err = a.createIncident(ctx, reqID, reqData); err != nil {
 		return trace.Wrap(err, "creating ServiceNow incident")
 	}
