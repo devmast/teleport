@@ -17,19 +17,24 @@ The [Upgrading Compatibility Overview](./upgrading/overview.mdx) explains how to
 upgrade components in your Teleport cluster to ensure that they communicate as
 expected.
 
-## Upgrading self-hosted clusters
-
-If you run a self-hosted edition of Teleport (Enterprise and Community Edition),
-you will need to upgrade the Auth Service and Proxy Service. 
+## Upgrading guides
 
 After getting familiar with the Compatibility Overview, follow one of the guides
-below to upgrade the Auth Service and Proxy Service, depending on the platform
-in which you installed these services:
+below to upgrade all of the components in your Teleport cluster. Choose the
+guide that matches your Teleport edition and the platform where you run Teleport
+services:
 
-- [Kubernetes](./upgrading/auth-proxy-helm.mdx)
-- [Linux Servers](./upgrading/auth-proxy-linux.mdx)
+Teleport Cloud:
 
-## Upgrading agents
+- [Linux Servers](./upgrading/cloud-linux.mdx)
+- [Kubernetes](./upgrading/cloud-kubernetes.mdx)
+
+Self-hosted deployments:
+
+- [Linux Servers](./upgrading/self-hosted-linux.mdx)
+- [Kubernetes](./upgrading/self-hosted-kubernetes.mdx)
+
+## Automatic agent upgrades
 
 We recommend that Teleport users set up automatic agent upgrades, where agents
 query a **version server** in order to determine whether they are out of date
@@ -40,14 +45,3 @@ On Teleport Cloud, the version server is managed for you.
 If you are running Teleport Enterprise, read the [Self-Hosted Automatic Agent
 Updates](./upgrading/self-hosted-automatic-agent-updates.mdx) guide to set up
 the version server yourself.
-
-Read [Enroll Agents into Automatic
-Updates](./upgrading//enroll-agent-into-automatic-updates.mdx) for how to set up
-Teleport agents to query the version server and install new versions of Teleport
-when they fall out of date.
-
-For special circumstances, you can also read about how to upgrade agents
-manually in your environment:
-
-- [Kubernetes](./upgrading/agents-helm.mdx)
-- [Linux Servers](./upgrading/agents-linux.mdx)
