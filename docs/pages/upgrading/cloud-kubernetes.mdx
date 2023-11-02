@@ -1,0 +1,121 @@
+---
+title: Upgrade Teleport Cloud Clusters on Kubernetes
+description: Provides instructions for upgrading Teleport Cloud clusters that run on Kubernetes. 
+---
+
+{/*TODO: Does Teleport Team support automatic upgrades*/}
+
+This guide explains how to upgrade Teleport Cloud clusters running on
+Kubernetes. On Teleport Cloud, Auth Service and Proxy Service upgrades are
+managed for you. To keep agents up to date, you can either enroll them in
+automatic upgrades or upgrade them manually using the method you used to install
+Teleport.
+
+## Prerequisites
+
+- Familiarity with the [Upgrading Compatibility Overview](./overview.mdx) guide,
+  which describes the sequence in which to upgrade components of your cluster.
+
+- Teleport Enterprise Cloud or Teleport Team account. You can determine the
+  current version of these services by running the following command, where
+  `mytenant` is the name of your Teleport Team or Teleport Enterprise Cloud
+  tenant:
+
+  ```code
+  $ curl -s https://mytenant.teleport.sh/webapi/ping | jq '.server_version'
+  ```
+
+Teleport supports automatic agent updates for the `teleport-kube-agent` Helm
+chart. The [Automatic Update Architecture
+](../../architecture/agent-update-management.mdx) guide describes how agent
+updating works. Automatic agent upgrades require:
+
+- A Teleport cluster running version 13.0 or above.
+
+- At least one Teleport Enterprise agent deployed via the `teleport-kube-agent`
+  Helm chart.
+
+## Step 1/2. Find agents to upgrade
+
+You can find agents that need to be enrolled using `tctl inventory ls` like so:
+
+```code
+$ tctl inventory ls --upgrader=none
+Server ID                            Hostname          Services Version Upgrader
+------------------------------------ ----------------- -------- ------- --------
+4fb2d97d-884a-4566-b477-c805d477df09 agent.example.com Node     v1.2.3  none
+...
+```
+
+If you have a lot of agents on different versions and want to prioritize enrolling
+your oldest agents, you can limit your search using the `--older-than` filter:
+
+```code
+$ tctl inventory ls --upgrader=none --older-than=v1.2.3
+Server ID                            Hostname        Services Version Upgrader
+------------------------------------ --------------- -------- ------- --------
+1e6578b6-9530-448e-8013-d32641324abb old.example.com Node     v1.1.1  none
+...
+```
+
+## Step 2/2. Enroll agents in automatic upgrades
+
+1. Confirm you are using the Teleport Enterprise image. The `enterprise` value
+   setting should have been set to `true` for the Helm chart installation.
+
+1. Add the following chart values to your existing agent `values.yaml`:
+
+   ```yaml
+   updater:
+     enabled: true
+   ```
+
+1. Update the Helm chart release with the new values by running `helm upgrade`.
+
+1. Validate the updater is running properly by checking if its pod is ready:
+
+   ```code
+   $ kubectl get pods
+   NAME                               READY   STATUS    RESTARTS   AGE
+   my-agent-0                         1/1     Running   0          14m
+   my-agent-1                         1/1     Running   0          14m
+   my-agent-2                         1/1     Running   0          14m
+   my-agent-updater-d9f97f5dd-v57g9   1/1     Running   0          16m
+   ```
+   
+   And by consulting its logs:
+   
+   ```code
+   $ kubectl logs deployment/<your-agent-release>-updater
+   2023-04-28T13:13:30Z	INFO	StatefulSet is already up-to-date, not updating.	{"controller": "statefulset", "controllerGroup": "apps", "controllerKind": "StatefulSet", "StatefulSet": {"name":"my-agent","namespace":"agent"}, "namespace": "agent", "name": "my-agent", "reconcileID": "10419f20-a4c9-45d4-a16f-406866b7fc05", "namespacedname": "agent/my-agent", "kind": "StatefulSet", "err": "no new version (current: \"v12.2.3\", next: \"v12.2.3\")"}
+   ```
+>
+The Kubernetes updater responds to events, or is woken up every 30 minutes.
+If you don't want to wait until the next reconciliation, you can trigger an
+event. Any deployment update will send an event, so the updater can be
+triggered by annotating the resource:
+
+```code
+kubectl annotate statefulset/<your-agent-release> 'debug.teleport.dev/trigger-event=1'
+```
+
+To suspend automatic upgrades for an agent, annotate the agent deployment with
+`teleport.dev/skipreconcile: "true"`.  Either by setting the
+`annotations.deployment` value in Helm, or by patching the deployment directly
+with `kubectl`.
+
+## Manually upgrading agents
+
+Run the following commands to upgrade Teleport agents running on Kubernetes.
+
+1. Update the Teleport Helm chart repository so you can install the latest
+   version of the `teleport-kube-agent` chart:
+
+  (!docs/pages//kubernetes-access/helm/includes/helm-repo-add.mdx!)
+
+1. Upgrade the Helm release:
+
+  ```code
+  $ helm upgrade teleport-agent teleport-kube-agent --version=(=teleport.version=) --values=values.yaml
+  ```
+
