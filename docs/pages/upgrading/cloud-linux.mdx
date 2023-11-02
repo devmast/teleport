@@ -3,8 +3,6 @@ title: Upgrade Teleport Cloud Clusters on Linux
 description: Provides instructions for upgrading Teleport Cloud clusters that run on Linux servers. 
 ---
 
-{/*TODO: Does Teleport Team support automatic upgrades*/}
-
 This guide explains how to upgrade Teleport Cloud clusters running on Linux
 servers. On Teleport Cloud, Auth Service and Proxy Service upgrades are managed
 for you. To keep agents up to date, you can either enroll them in automatic
@@ -18,7 +16,7 @@ upgrades or upgrade them manually using the method you used to install Teleport.
 - Teleport Enterprise Cloud or Teleport Team account. You can determine the
   current version of these services by running the following command, where
   `mytenant` is the name of your Teleport Team or Teleport Enterprise Cloud
-  tenant:
+  account:
 
   ```code
   $ curl -s https://mytenant.teleport.sh/webapi/ping | jq '.server_version'
