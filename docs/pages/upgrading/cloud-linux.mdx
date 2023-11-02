@@ -1,0 +1,143 @@
+---
+title: Upgrade Self-Hosted Teleport Clusters on Linux
+description: Provides instructions for upgrading self-hosted Teleport clusters that run on Linux servers. 
+---
+
+{/*TODO: Does Teleport Team support automatic upgrades*/}
+
+This guide explains how to upgrade Teleport Cloud clusters running on Linux
+servers. On Teleport Cloud, Auth Service and Proxy Service upgrades are managed
+for you. To keep agents up to date, you can either enroll them in automatic
+upgrades or upgrade them manually using the method you used to install Teleport.
+
+## Prerequisites
+
+- Familiarity with the [Upgrading Compatibility Overview](./overview.mdx) guide,
+  which describes the sequence in which to upgrade components of your cluster.
+
+- Teleport Enterprise Cloud or Teleport Team account. You can determine the
+  current version of these services by running the following command, where
+  `mytenant` is the name of your Teleport Team or Teleport Enterprise Cloud
+  tenant:
+
+  ```code
+  $ curl -s https://mytenant.teleport.sh/webapi/ping | jq '.server_version'
+  ```
+
+Teleport supports automatic agent updates for systemd-based Linux distributions
+using `apt`, `yum`, and `zypper` package managers. The [Automatic Update Architecture
+](../../architecture/agent-update-management.mdx) guide describes how agent
+updating works. Automatic agent upgrades require:
+
+- A Teleport Cloud account that supports automatic upgrades.
+
+{/*TODO: How to tell if your Cloud account supports auto upgrades?*/}
+
+- At least one Teleport Enterprise agent, started via systemd on a distribution
+  using the `apt` or `yum` package managers.
+- A **version server** in your infrastructure that agents can query in order to
+  upgrade themselves. Read [Set up Automatic Upgrade
+  Infrastructure](./self-hosted-automatic-agent-updates.mdx).
+
+  If your environment does not support automatic upgrades, you can follow the
+  same instructions to upgrade agents that you used to upgrade the Auth Service
+  and Proxy Service.
+
+## Step 1/2. Find agents to upgrade
+
+You can find agents that need to be enrolled using `tctl inventory ls` like so:
+
+```code
+$ tctl inventory ls --upgrader=none
+Server ID                            Hostname          Services Version Upgrader
+------------------------------------ ----------------- -------- ------- --------
+4fb2d97d-884a-4566-b477-c805d477df09 agent.example.com Node     v1.2.3  none
+...
+```
+
+If you have a lot of agents on different versions and want to prioritize enrolling
+your oldest agents, you can limit your search using the `--older-than` filter:
+
+```code
+$ tctl inventory ls --upgrader=none --older-than=v1.2.3
+Server ID                            Hostname        Services Version Upgrader
+------------------------------------ --------------- -------- ------- --------
+1e6578b6-9530-448e-8013-d32641324abb old.example.com Node     v1.1.1  none
+...
+```
+
+## Step 2/2. Enroll agents in automatic upgrades
+
+Complete the following instructions on each agent you would like to enroll into
+automatic upgrades:
+
+1. Ensure the Teleport repository is added and Teleport Enterprise is installed.
+
+   To verify if the Teleport repository was added to the system, check if either of
+   the follow files exist:
+   
+   ```code
+   $ ls /etc/apt/sources.list.d/teleport.list
+   # or
+   $ ls /etc/yum.repos.d/teleport.repo
+   ```
+
+1. If the Teleport repository is not found, add the appropriate repository and
+   reinstall Teleport:
+
+   (!docs/pages/includes/cloud/install-linux-cloud.mdx!)
+
+1. If you changed the agent user to run as non-root, create
+   `/etc/teleport-upgrade.d/schedule` and grant ownership to your Teleport user.
+   Otherwise, you can skip this step:
+
+   ```code
+   $ sudo mkdir -p /etc/teleport-upgrade.d/
+   $ sudo touch /etc/teleport-upgrade.d/schedule
+   $ sudo chown <your-teleport-user> /etc/teleport-upgrade.d/schedule
+   ```
+
+1. Verify that the updater can see your version endpoint by checking for
+   updates:
+
+   ```code
+   $ sudo teleport-upgrade dry-run
+   ```
+   
+   You should see one of the following messages, depending on the target version
+   you are currently serving:
+   
+   ```text
+   no upgrades available (1.2.3 == 1.2.3)
+   an upgrade is available (1.2.3 -> 2.3.4)
+   ```
+
+   The updater may display warnings about not having a valid upgrade schedule.
+   This is expected immediately after install as the maintenance schedule might
+   not be exported yet.
+
+If the agent is not automatically updated, you can invoke the updater manually
+and look at its logs:
+
+```code
+$ sudo teleport-upgrade run
+```
+
+To suspend automatic upgrades, disable the systemd timer:
+
+```code
+$ sudo systemctl disable --now teleport-upgrade.timer
+```
+
+To enable and start the systemd timer after suspending:
+
+```code
+$ sudo systemctl enable --now teleport-upgrade.timer
+```
+
+## Manually upgrade agents
+
+You can manually upgrade each agent by adding the appropriate package repository
+and reinstalling Teleport on that agent:
+
+(!docs/pages/includes/cloud/install-linux-cloud.mdx!)
