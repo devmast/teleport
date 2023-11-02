@@ -134,8 +134,10 @@ type DeviceTrustServiceClient interface {
 	// Authorized either by a valid MDM service certificate or the appropriate
 	// "device" permissions (create/update/delete).
 	SyncInventory(ctx context.Context, opts ...grpc.CallOption) (DeviceTrustService_SyncInventoryClient, error)
-	// Deprecated: Do not use.
-	// Superseded by ResourceUsageService.GetUsage.
+	// GetDevicesUsage retrieves device limits and usage numbers for the
+	// underlying account/license.
+	// Requires an authenticated user with billing/read permissions.
+	// See [DevicesUsage] for details.
 	GetDevicesUsage(ctx context.Context, in *GetDevicesUsageRequest, opts ...grpc.CallOption) (*DevicesUsage, error)
 }
 
@@ -321,7 +323,6 @@ func (x *deviceTrustServiceSyncInventoryClient) Recv() (*SyncInventoryResponse, 
 	return m, nil
 }
 
-// Deprecated: Do not use.
 func (c *deviceTrustServiceClient) GetDevicesUsage(ctx context.Context, in *GetDevicesUsageRequest, opts ...grpc.CallOption) (*DevicesUsage, error) {
 	out := new(DevicesUsage)
 	err := c.cc.Invoke(ctx, DeviceTrustService_GetDevicesUsage_FullMethodName, in, out, opts...)
@@ -416,8 +417,10 @@ type DeviceTrustServiceServer interface {
 	// Authorized either by a valid MDM service certificate or the appropriate
 	// "device" permissions (create/update/delete).
 	SyncInventory(DeviceTrustService_SyncInventoryServer) error
-	// Deprecated: Do not use.
-	// Superseded by ResourceUsageService.GetUsage.
+	// GetDevicesUsage retrieves device limits and usage numbers for the
+	// underlying account/license.
+	// Requires an authenticated user with billing/read permissions.
+	// See [DevicesUsage] for details.
 	GetDevicesUsage(context.Context, *GetDevicesUsageRequest) (*DevicesUsage, error)
 	mustEmbedUnimplementedDeviceTrustServiceServer()
 }

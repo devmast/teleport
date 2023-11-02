@@ -68,21 +68,21 @@ func SetupUser(process *service.TeleportProcess, username string, roles []types.
 		roleOptions.ForwardAgent = types.NewBool(true)
 		role.SetOptions(roleOptions)
 
-		role, err = auth.UpsertRole(ctx, role)
+		err = auth.UpsertRole(ctx, role)
 		if err != nil {
 			return trace.Wrap(err)
 		}
 		teleUser.AddRole(role.GetMetadata().Name)
 	} else {
 		for _, role := range roles {
-			role, err := auth.UpsertRole(ctx, role)
+			err := auth.UpsertRole(ctx, role)
 			if err != nil {
 				return trace.Wrap(err)
 			}
 			teleUser.AddRole(role.GetName())
 		}
 	}
-	_, err = auth.UpsertUser(ctx, teleUser)
+	err = auth.UpsertUser(teleUser)
 	if err != nil {
 		return trace.Wrap(err)
 	}

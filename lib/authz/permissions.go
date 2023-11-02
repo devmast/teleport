@@ -113,7 +113,8 @@ type AuthorizerAccessPoint interface {
 	// GetRole returns role by name
 	GetRole(ctx context.Context, name string) (types.Role, error)
 
-	GetUser(ctx context.Context, name string, withSecrets bool) (types.User, error)
+	// GetUser returns a services.User for this cluster.
+	GetUser(name string, withSecrets bool) (types.User, error)
 
 	// GetCertAuthority returns cert authority by id
 	GetCertAuthority(ctx context.Context, id types.CertAuthID, loadKeys bool) (types.CertAuthority, error)
@@ -320,7 +321,7 @@ func (a *authorizer) enforcePrivateKeyPolicy(ctx context.Context, authContext *C
 func (a *authorizer) fromUser(ctx context.Context, userI interface{}) (*Context, error) {
 	switch user := userI.(type) {
 	case LocalUser:
-		return a.authorizeLocalUser(ctx, user)
+		return a.authorizeLocalUser(user)
 	case RemoteUser:
 		return a.authorizeRemoteUser(ctx, user)
 	case BuiltinRole:
@@ -352,7 +353,7 @@ func CheckIPPinning(ctx context.Context, identity tlsca.Identity, pinSourceIP bo
 		return nil
 	}
 
-	clientSrcAddr, err := ClientSrcAddrFromContext(ctx)
+	clientSrcAddr, err := ClientAddrFromContext(ctx)
 	if err != nil {
 		return trace.Wrap(err)
 	}
@@ -387,8 +388,8 @@ func CheckIPPinning(ctx context.Context, identity tlsca.Identity, pinSourceIP bo
 }
 
 // authorizeLocalUser returns authz context based on the username
-func (a *authorizer) authorizeLocalUser(ctx context.Context, u LocalUser) (*Context, error) {
-	return ContextForLocalUser(ctx, u, a.accessPoint, a.clusterName, a.disableDeviceAuthorization)
+func (a *authorizer) authorizeLocalUser(u LocalUser) (*Context, error) {
+	return ContextForLocalUser(u, a.accessPoint, a.clusterName, a.disableDeviceAuthorization)
 }
 
 // authorizeRemoteUser returns checker based on cert authority roles
@@ -740,6 +741,8 @@ func definitionForBuiltinRole(clusterName string, recConfig types.SessionRecordi
 						types.NewRule(types.KindClusterAuthPreference, services.RO()),
 						types.NewRule(types.KindAppServer, services.RW()),
 						types.NewRule(types.KindApp, services.RO()),
+						types.NewRule(types.KindWebSession, services.RO()),
+						types.NewRule(types.KindWebToken, services.RO()),
 						types.NewRule(types.KindJWT, services.RW()),
 						types.NewRule(types.KindLock, services.RO()),
 					},
@@ -986,9 +989,9 @@ func ContextForBuiltinRole(r BuiltinRole, recConfig types.SessionRecordingConfig
 }
 
 // ContextForLocalUser returns a context with the local user info embedded.
-func ContextForLocalUser(ctx context.Context, u LocalUser, accessPoint AuthorizerAccessPoint, clusterName string, disableDeviceAuthz bool) (*Context, error) {
+func ContextForLocalUser(u LocalUser, accessPoint AuthorizerAccessPoint, clusterName string, disableDeviceAuthz bool) (*Context, error) {
 	// User has to be fetched to check if it's a blocked username
-	user, err := accessPoint.GetUser(ctx, u.Username, false)
+	user, err := accessPoint.GetUser(u.Username, false)
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
@@ -1030,11 +1033,8 @@ const (
 	// contextUser is a user set in the context of the request
 	contextUser contextKey = "teleport-user"
 
-	// contextClientSrcAddr is a client source address set in the context of the request
-	contextClientSrcAddr contextKey = "teleport-client-src-addr"
-
-	// contextClientDstAddr is a client destination address set in the context of the request
-	contextClientDstAddr contextKey = "teleport-client-dst-addr"
+	// contextClientAddr is a client address set in the context of the request
+	contextClientAddr contextKey = "client-addr"
 )
 
 // WithDelegator alias for backwards compatibility
@@ -1153,7 +1153,7 @@ func ConvertAuthorizerError(ctx context.Context, log logrus.FieldLogger, err err
 		// unaltered so that they know to reauthenticate with a valid key.
 		return trace.Unwrap(err)
 	default:
-		log.WithError(err).Warn("Suppressing unknown authz error.")
+		log.Warn(trace.DebugReport(err))
 	}
 	return trace.AccessDenied("access denied")
 }
@@ -1346,53 +1346,25 @@ func ContextWithUserCertificate(ctx context.Context, cert *x509.Certificate) con
 
 // UserCertificateFromContext returns the user certificate from the context.
 func UserCertificateFromContext(ctx context.Context) (*x509.Certificate, error) {
-	if ctx == nil {
-		return nil, trace.BadParameter("context is nil")
-	}
 	cert, ok := ctx.Value(contextUserCertificate).(*x509.Certificate)
 	if !ok {
-		return nil, trace.BadParameter("user certificate was not found in the context")
+		return nil, trace.BadParameter("expected type *x509.Certificate, got %T", cert)
 	}
 	return cert, nil
 }
 
-// ContextWithClientSrcAddr returns the context with the address embedded.
-func ContextWithClientSrcAddr(ctx context.Context, addr net.Addr) context.Context {
-	if ctx == nil {
-		return nil
-	}
-	return context.WithValue(ctx, contextClientSrcAddr, addr)
+// ContextWithClientAddr returns the context with the address embedded.
+func ContextWithClientAddr(ctx context.Context, addr net.Addr) context.Context {
+	return context.WithValue(ctx, contextClientAddr, addr)
 }
 
-// ClientSrcAddrFromContext returns the client address from the context.
-func ClientSrcAddrFromContext(ctx context.Context) (net.Addr, error) {
-	if ctx == nil {
-		return nil, trace.BadParameter("context is nil")
-	}
-	addr, ok := ctx.Value(contextClientSrcAddr).(net.Addr)
+// ClientAddrFromContext returns the client address from the context.
+func ClientAddrFromContext(ctx context.Context) (net.Addr, error) {
+	addr, ok := ctx.Value(contextClientAddr).(net.Addr)
 	if !ok {
-		return nil, trace.BadParameter("client source address was not found in the context")
+		return nil, trace.BadParameter("expected type net.Addr, got %T", addr)
 	}
 	return addr, nil
-}
-
-// ContextWithClientAddrs returns the context with the client source and destination addresses embedded.
-func ContextWithClientAddrs(ctx context.Context, src, dst net.Addr) context.Context {
-	if ctx == nil {
-		return nil
-	}
-	ctx = context.WithValue(ctx, contextClientSrcAddr, src)
-	return context.WithValue(ctx, contextClientDstAddr, dst)
-}
-
-// ClientAddrsFromContext returns the client address from the context.
-func ClientAddrsFromContext(ctx context.Context) (src net.Addr, dst net.Addr) {
-	if ctx == nil {
-		return nil, nil
-	}
-	src, _ = ctx.Value(contextClientSrcAddr).(net.Addr)
-	dst, _ = ctx.Value(contextClientDstAddr).(net.Addr)
-	return
 }
 
 // ContextWithUser returns the context with the user embedded.
@@ -1402,12 +1374,9 @@ func ContextWithUser(ctx context.Context, user IdentityGetter) context.Context {
 
 // UserFromContext returns the user from the context.
 func UserFromContext(ctx context.Context) (IdentityGetter, error) {
-	if ctx == nil {
-		return nil, trace.BadParameter("context is nil")
-	}
 	user, ok := ctx.Value(contextUser).(IdentityGetter)
 	if !ok {
-		return nil, trace.BadParameter("user identity was not found in the context")
+		return nil, trace.BadParameter("expected type IdentityGetter, got %T", user)
 	}
 	return user, nil
 }
@@ -1427,27 +1396,11 @@ func HasBuiltinRole(authContext Context, name string) bool {
 
 // IsLocalUser checks if the identity is a local user.
 func IsLocalUser(authContext Context) bool {
-	_, ok := authContext.UnmappedIdentity.(LocalUser)
+	_, ok := authContext.Identity.(LocalUser)
 	return ok
-}
-
-// IsLocalOrRemoteUser checks if the identity is either a local or remote user.
-func IsLocalOrRemoteUser(authContext Context) bool {
-	switch authContext.UnmappedIdentity.(type) {
-	case LocalUser, RemoteUser:
-		return true
-	default:
-		return false
-	}
 }
 
 // IsCurrentUser checks if the identity is a local user matching the given username
 func IsCurrentUser(authContext Context, username string) bool {
 	return IsLocalUser(authContext) && authContext.User.GetName() == username
-}
-
-// IsRemoteUser checks if the identity is a remote user.
-func IsRemoteUser(authContext Context) bool {
-	_, ok := authContext.UnmappedIdentity.(RemoteUser)
-	return ok
 }

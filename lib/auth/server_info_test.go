@@ -94,25 +94,18 @@ func TestReconcileLabels(t *testing.T) {
 	require.NoError(t, err)
 
 	// Update the server's labels.
-	awsServerInfo, err := types.NewServerInfo(types.Metadata{
-		Name: types.ServerInfoNameFromAWS("my-account", "my-instance"),
-	}, types.ServerInfoSpecV1{
-		NewLabels: map[string]string{"a": "1", "b": "2"},
-	})
+	labels := map[string]string{"a": "1", "b": "2"}
+	serverInfo, err := types.NewServerInfo(types.Metadata{
+		Name:   "aws-my-account-my-instance",
+		Labels: labels,
+	}, types.ServerInfoSpecV1{})
 	require.NoError(t, err)
-	require.NoError(t, pack.a.UpsertServerInfo(ctx, awsServerInfo))
-
-	regularServerInfo, err := types.NewServerInfo(types.Metadata{
-		Name: types.ServerInfoNameFromNodeName(serverName),
-	}, types.ServerInfoSpecV1{
-		NewLabels: map[string]string{"b": "3", "c": "4"},
-	})
-	require.NoError(t, err)
-	require.NoError(t, pack.a.UpsertServerInfo(ctx, regularServerInfo))
+	serverInfo.SetSubKind(types.SubKindCloudInfo)
+	require.NoError(t, pack.a.UpsertServerInfo(ctx, serverInfo))
 
 	go pack.a.ReconcileServerInfos(ctx)
 	// Wait until the reconciler finishes processing the serverinfo.
 	clock.BlockUntil(1)
 	// Check that labels were received downstream.
-	require.Equal(t, map[string]string{"a": "1", "b": "3", "c": "4"}, upstream.updatedLabels)
+	require.Equal(t, labels, upstream.updatedLabels)
 }

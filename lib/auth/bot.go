@@ -77,7 +77,7 @@ func createBotRole(ctx context.Context, s *Server, botName string, resourceName 
 	meta.Labels[types.BotLabel] = botName
 	role.SetMetadata(meta)
 
-	role, err = s.CreateRole(ctx, role)
+	err = s.CreateRole(ctx, role)
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
@@ -109,8 +109,7 @@ func createBotUser(
 	user.SetMetadata(metadata)
 	user.SetTraits(traits)
 
-	user, err = s.CreateUser(ctx, user)
-	if err != nil {
+	if err := s.CreateUser(ctx, user); err != nil {
 		return nil, trace.Wrap(err)
 	}
 
@@ -162,7 +161,7 @@ func (a *Server) createBot(ctx context.Context, req *proto.CreateBotRequest) (*p
 	if roleExists := (err == nil); roleExists {
 		return nil, trace.AlreadyExists("cannot add bot: role %q already exists", resourceName)
 	}
-	_, err = a.Services.GetUser(ctx, resourceName, false)
+	_, err = a.Services.GetUser(resourceName, false)
 	if err != nil && !trace.IsNotFound(err) {
 		return nil, trace.Wrap(err)
 	}
@@ -224,7 +223,7 @@ func (a *Server) createBot(ctx context.Context, req *proto.CreateBotRequest) (*p
 // deleteBotUser removes an existing bot user, ensuring that it has bot labels
 // matching the bot before deleting anything.
 func (a *Server) deleteBotUser(ctx context.Context, botName, resourceName string) error {
-	user, err := a.GetUser(ctx, resourceName, false)
+	user, err := a.GetUser(resourceName, false)
 	if err != nil {
 		return trace.Wrap(err, "could not fetch expected bot user %s", resourceName)
 	}
@@ -279,7 +278,7 @@ func (a *Server) deleteBot(ctx context.Context, botName string) error {
 func (a *Server) getBotUsers(ctx context.Context) ([]types.User, error) {
 	var botUsers []types.User
 
-	users, err := a.GetUsers(ctx, false)
+	users, err := a.GetUsers(false)
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
@@ -376,7 +375,7 @@ func (a *Server) checkOrCreateBotToken(ctx context.Context, req *proto.CreateBot
 func (a *Server) validateGenerationLabel(ctx context.Context, username string, certReq *certRequest, currentIdentityGeneration uint64) error {
 	// Fetch the user, bypassing the cache. We might otherwise fetch a stale
 	// value in case of a rapid certificate renewal.
-	user, err := a.Services.GetUser(ctx, username, false)
+	user, err := a.Services.GetUser(username, false)
 	if err != nil {
 		return trace.Wrap(err)
 	}
@@ -498,7 +497,7 @@ func (a *Server) validateGenerationLabel(ctx context.Context, username string, c
 	newGeneration := currentIdentityGeneration + 1
 
 	// As above, commit some crimes to clone the User.
-	newUser, err := a.Services.GetUser(ctx, user.GetName(), false)
+	newUser, err := a.Services.GetUser(user.GetName(), false)
 	if err != nil {
 		return trace.Wrap(err)
 	}

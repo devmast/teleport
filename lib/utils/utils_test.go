@@ -149,7 +149,6 @@ func TestVersions(t *testing.T) {
 	for _, testCase := range successTestCases {
 		t.Run(testCase.info, func(t *testing.T) {
 			require.NoError(t, CheckVersion(testCase.client, testCase.minClient))
-			assert.True(t, MeetsVersion(testCase.client, testCase.minClient), "MeetsVersion expected to succeed")
 		})
 	}
 
@@ -160,7 +159,6 @@ func TestVersions(t *testing.T) {
 	for _, testCase := range failTestCases {
 		t.Run(testCase.info, func(t *testing.T) {
 			fixtures.AssertBadParameter(t, CheckVersion(testCase.client, testCase.minClient))
-			assert.False(t, MeetsVersion(testCase.client, testCase.minClient), "MeetsVersion expected to fail")
 		})
 	}
 }

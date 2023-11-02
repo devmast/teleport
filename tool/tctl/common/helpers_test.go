@@ -48,7 +48,6 @@ import (
 type options struct {
 	CertPool *x509.CertPool
 	Insecure bool
-	Editor   func(string) error
 }
 
 type optionsFunc func(o *options)
@@ -62,12 +61,6 @@ func withRootCertPool(pool *x509.CertPool) optionsFunc {
 func withInsecure(insecure bool) optionsFunc {
 	return func(o *options) {
 		o.Insecure = insecure
-	}
-}
-
-func withEditor(editor func(string) error) optionsFunc {
-	return func(o *options) {
-		o.Editor = editor
 	}
 }
 
@@ -126,19 +119,6 @@ func runResourceCommand(t *testing.T, fc *config.FileConfig, args []string, opts
 	var stdoutBuff bytes.Buffer
 	command := &ResourceCommand{
 		stdout: &stdoutBuff,
-	}
-	return &stdoutBuff, runCommand(t, fc, command, args, opts...)
-}
-
-func runEditCommand(t *testing.T, fc *config.FileConfig, args []string, opts ...optionsFunc) (*bytes.Buffer, error) {
-	var o options
-	for _, opt := range opts {
-		opt(&o)
-	}
-
-	var stdoutBuff bytes.Buffer
-	command := &EditCommand{
-		editor: o.Editor,
 	}
 	return &stdoutBuff, runCommand(t, fc, command, args, opts...)
 }

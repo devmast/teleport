@@ -57,7 +57,7 @@ func (a *Server) CreateAppSession(ctx context.Context, req types.CreateAppSessio
 
 	// Encode user traits in the app access certificate. This will allow to
 	// pass user traits when talking to app servers in leaf clusters.
-	_, traits, err := services.ExtractFromIdentity(ctx, a, identity)
+	_, traits, err := services.ExtractFromIdentity(a, identity)
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}

@@ -34,7 +34,6 @@ message Metadata {
   // expires is a global expiry time header can be set on any resource in the
   // system.
   google.protobuf.Timestamp expires = 6;
-  // ID is a record ID
   // Deprecated: Use revision instead.
   int64 id = 7 [deprecated = true];
   // revision is an opaque identifier which tracks the versions of a resource

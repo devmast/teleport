@@ -21,14 +21,14 @@ jobs:
       contents: read
 
     container:
-      image: ghcr.io/gravitational/teleport-buildbox:teleport15
+      image: ghcr.io/gravitational/teleport-buildbox:teleport14
 
     env:
       GOLANGCI_LINT_VERSION: v1.55.1
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v3
 
       - name: Run `go mod tidy`
         run: rm go.sum api/go.sum && go mod tidy && (cd api && go mod tidy)

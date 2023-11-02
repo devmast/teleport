@@ -1136,16 +1136,15 @@ var _ executor[types.ClusterName, clusterNameGetter] = clusterNameExecutor{}
 type userExecutor struct{}
 
 func (userExecutor) getAll(ctx context.Context, cache *Cache, loadSecrets bool) ([]types.User, error) {
-	return cache.Users.GetUsers(ctx, loadSecrets)
+	return cache.Users.GetUsers(loadSecrets)
 }
 
 func (userExecutor) upsert(ctx context.Context, cache *Cache, resource types.User) error {
-	_, err := cache.usersCache.UpsertUser(ctx, resource)
-	return err
+	return cache.usersCache.UpsertUser(resource)
 }
 
 func (userExecutor) deleteAll(ctx context.Context, cache *Cache) error {
-	return cache.usersCache.DeleteAllUsers(ctx)
+	return cache.usersCache.DeleteAllUsers()
 }
 
 func (userExecutor) delete(ctx context.Context, cache *Cache, resource types.Resource) error {
@@ -1162,9 +1161,8 @@ func (userExecutor) getReader(cache *Cache, cacheOK bool) userGetter {
 }
 
 type userGetter interface {
-	GetUser(ctx context.Context, user string, withSecrets bool) (types.User, error)
-	GetUsers(ctx context.Context, withSecrets bool) ([]types.User, error)
-	ListUsers(ctx context.Context, pageSize int, nextToken string, withSecrets bool) ([]types.User, string, error)
+	GetUser(user string, withSecrets bool) (types.User, error)
+	GetUsers(withSecrets bool) ([]types.User, error)
 }
 
 var _ executor[types.User, userGetter] = userExecutor{}
@@ -1176,12 +1174,11 @@ func (roleExecutor) getAll(ctx context.Context, cache *Cache, loadSecrets bool) 
 }
 
 func (roleExecutor) upsert(ctx context.Context, cache *Cache, resource types.Role) error {
-	_, err := cache.accessCache.UpsertRole(ctx, resource)
-	return err
+	return cache.accessCache.UpsertRole(ctx, resource)
 }
 
 func (roleExecutor) deleteAll(ctx context.Context, cache *Cache) error {
-	return cache.accessCache.DeleteAllRoles(ctx)
+	return cache.accessCache.DeleteAllRoles()
 }
 
 func (roleExecutor) delete(ctx context.Context, cache *Cache, resource types.Resource) error {

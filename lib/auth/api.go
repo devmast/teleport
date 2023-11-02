@@ -25,7 +25,6 @@ import (
 
 	"github.com/gravitational/teleport/api/client/proto"
 	"github.com/gravitational/teleport/api/types"
-	"github.com/gravitational/teleport/api/types/discoveryconfig"
 	"github.com/gravitational/teleport/lib/events"
 	"github.com/gravitational/teleport/lib/services"
 )
@@ -189,7 +188,7 @@ type ReadProxyAccessPoint interface {
 	GetRoles(ctx context.Context) ([]types.Role, error)
 
 	// GetUser returns a services.User for this cluster.
-	GetUser(ctx context.Context, name string, withSecrets bool) (types.User, error)
+	GetUser(name string, withSecrets bool) (types.User, error)
 
 	// GetNamespaces returns a list of namespaces
 	GetNamespaces() ([]types.Namespace, error)
@@ -428,7 +427,7 @@ type ReadKubernetesAccessPoint interface {
 	GetSessionRecordingConfig(ctx context.Context, opts ...services.MarshalOption) (types.SessionRecordingConfig, error)
 
 	// GetUser returns a services.User for this cluster.
-	GetUser(ctx context.Context, name string, withSecrets bool) (types.User, error)
+	GetUser(name string, withSecrets bool) (types.User, error)
 
 	// GetRole returns role by name
 	GetRole(ctx context.Context, name string) (types.Role, error)
@@ -494,7 +493,7 @@ type ReadAppsAccessPoint interface {
 	GetSessionRecordingConfig(ctx context.Context, opts ...services.MarshalOption) (types.SessionRecordingConfig, error)
 
 	// GetUser returns a services.User for this cluster.
-	GetUser(ctx context.Context, name string, withSecrets bool) (types.User, error)
+	GetUser(name string, withSecrets bool) (types.User, error)
 
 	// GetRole returns role by name
 	GetRole(ctx context.Context, name string) (types.Role, error)
@@ -561,7 +560,7 @@ type ReadDatabaseAccessPoint interface {
 	GetSessionRecordingConfig(ctx context.Context, opts ...services.MarshalOption) (types.SessionRecordingConfig, error)
 
 	// GetUser returns a services.User for this cluster.
-	GetUser(ctx context.Context, name string, withSecrets bool) (types.User, error)
+	GetUser(name string, withSecrets bool) (types.User, error)
 
 	// GetRole returns role by name
 	GetRole(ctx context.Context, name string) (types.Role, error)
@@ -628,7 +627,7 @@ type ReadWindowsDesktopAccessPoint interface {
 	GetSessionRecordingConfig(ctx context.Context, opts ...services.MarshalOption) (types.SessionRecordingConfig, error)
 
 	// GetUser returns a services.User for this cluster.
-	GetUser(ctx context.Context, name string, withSecrets bool) (types.User, error)
+	GetUser(name string, withSecrets bool) (types.User, error)
 
 	// GetRole returns role by name
 	GetRole(ctx context.Context, name string) (types.Role, error)
@@ -702,9 +701,6 @@ type ReadDiscoveryAccessPoint interface {
 	GetApps(context.Context) ([]types.Application, error)
 	// GetApp returns the specified application resource.
 	GetApp(ctx context.Context, name string) (types.Application, error)
-
-	// ListDiscoveryConfigs returns a paginated list of Discovery Config resources.
-	ListDiscoveryConfigs(ctx context.Context, pageSize int, nextKey string) ([]*discoveryconfig.DiscoveryConfig, string, error)
 }
 
 // DiscoveryAccessPoint is an API interface implemented by a certificate authority (CA) to be
@@ -766,7 +762,7 @@ type ReadOktaAccessPoint interface {
 	GetRole(ctx context.Context, name string) (types.Role, error)
 
 	// GetUser returns a services.User for this cluster.
-	GetUser(ctx context.Context, name string, withSecrets bool) (types.User, error)
+	GetUser(name string, withSecrets bool) (types.User, error)
 
 	// ListUserGroups returns a paginated list of all user group resources.
 	ListUserGroups(context.Context, int, string) ([]types.UserGroup, string, error)
@@ -783,7 +779,7 @@ type ReadOktaAccessPoint interface {
 	// ListOktaAssignments returns a paginated list of all Okta assignment resources.
 	ListOktaAssignments(context.Context, int, string) ([]types.OktaAssignment, string, error)
 
-	// GetOktaAssignment returns the specified Okta assignment resource.
+	// GetOktaAssignmen treturns the specified Okta assignment resources.
 	GetOktaAssignment(ctx context.Context, name string) (types.OktaAssignment, error)
 
 	// GetApplicationServers returns all registered application servers.
@@ -909,10 +905,10 @@ type Cache interface {
 	GetCertAuthorities(ctx context.Context, caType types.CertAuthType, loadKeys bool) ([]types.CertAuthority, error)
 
 	// GetUser returns a services.User for this cluster.
-	GetUser(ctx context.Context, name string, withSecrets bool) (types.User, error)
+	GetUser(name string, withSecrets bool) (types.User, error)
 
 	// GetUsers returns a list of local users registered with this domain
-	GetUsers(ctx context.Context, withSecrets bool) ([]types.User, error)
+	GetUsers(withSecrets bool) ([]types.User, error)
 
 	// GetRole returns role by name
 	GetRole(ctx context.Context, name string) (types.Role, error)

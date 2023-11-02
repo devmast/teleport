@@ -84,7 +84,7 @@ func (m *mockGetter) GetRole(ctx context.Context, name string) (types.Role, erro
 	return role, nil
 }
 
-func (m *mockGetter) GetUser(ctx context.Context, name string, withSecrets bool) (types.User, error) {
+func (m *mockGetter) GetUser(name string, withSecrets bool) (types.User, error) {
 	if withSecrets {
 		return nil, trace.NotImplemented("")
 	}

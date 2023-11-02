@@ -203,7 +203,7 @@ func TestUserAdd(t *testing.T) {
 			}
 
 			require.NoError(t, err)
-			createdUser, err := client.GetUser(ctx, username, false)
+			createdUser, err := client.GetUser(username, false)
 			require.NoError(t, err)
 
 			if len(tc.wantRoles) > 0 {
@@ -351,8 +351,7 @@ func TestUserUpdate(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err = client.UpsertUser(ctx, baseUser)
-			require.NoError(t, err)
+			require.NoError(t, client.UpsertUser(baseUser))
 			args := append([]string{"update"}, tc.args...)
 			args = append(args, "test-user")
 			err := runUserCommand(t, fileConfig, args)
@@ -362,7 +361,7 @@ func TestUserUpdate(t *testing.T) {
 			}
 
 			require.NoError(t, err)
-			updatedUser, err := client.GetUser(ctx, "test-user", false)
+			updatedUser, err := client.GetUser("test-user", false)
 			require.NoError(t, err)
 
 			if len(tc.wantRoles) > 0 {

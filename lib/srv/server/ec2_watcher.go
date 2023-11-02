@@ -30,8 +30,8 @@ import (
 	usageeventsv1 "github.com/gravitational/teleport/api/gen/proto/go/usageevents/v1"
 	"github.com/gravitational/teleport/api/types"
 	"github.com/gravitational/teleport/lib/cloud"
-	awslib "github.com/gravitational/teleport/lib/cloud/aws"
 	"github.com/gravitational/teleport/lib/labels"
+	"github.com/gravitational/teleport/lib/srv/db/common"
 )
 
 const (
@@ -96,13 +96,14 @@ func ToEC2Instances(insts []*ec2.Instance) []EC2Instance {
 func (i *EC2Instances) ServerInfos() ([]types.ServerInfo, error) {
 	serverInfos := make([]types.ServerInfo, 0, len(i.Instances))
 	for _, instance := range i.Instances {
+		name := i.AccountID + "-" + instance.InstanceID
 		tags := make(map[string]string, len(instance.Tags))
 		for k, v := range instance.Tags {
 			tags[labels.FormatCloudLabelKey(labels.AWSLabelNamespace, k)] = v
 		}
 
 		si, err := types.NewServerInfo(types.Metadata{
-			Name: types.ServerInfoNameFromAWS(i.AccountID, instance.InstanceID),
+			Name: name,
 		}, types.ServerInfoSpecV1{
 			NewLabels: tags,
 		})
@@ -385,7 +386,7 @@ func (f *ec2InstanceFetcher) GetInstances(ctx context.Context, rotation bool) ([
 			return true
 		})
 	if err != nil {
-		return nil, awslib.ConvertRequestFailureError(err)
+		return nil, common.ConvertError(err)
 	}
 
 	if len(instances) == 0 {

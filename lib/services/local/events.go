@@ -77,8 +77,6 @@ func (e *EventsService) NewWatcher(ctx context.Context, watch types.Watch) (type
 			parser = newAuthPreferenceParser()
 		case types.KindSessionRecordingConfig:
 			parser = newSessionRecordingConfigParser()
-		case types.KindExternalCloudAudit:
-			parser = newExternalCloudAuditParser()
 		case types.KindUIConfig:
 			parser = newUIConfigParser()
 		case types.KindClusterName:
@@ -200,15 +198,6 @@ func (e *EventsService) NewWatcher(ctx context.Context, watch types.Watch) (type
 
 	if len(validKinds) == 0 {
 		return nil, trace.BadParameter("none of the requested kinds can be watched")
-	}
-
-	origNumPrefixes := len(prefixes)
-	redundantNumPrefixes := len(backend.RemoveRedundantPrefixes(prefixes))
-	if origNumPrefixes != redundantNumPrefixes {
-		// If you've hit this error, the prefixes in two or more of your parsers probably overlap, meaning
-		// one prefix will also contain another as a subset. Look into using backend.ExactKey instead of
-		// backend.Key in your parser.
-		return nil, trace.BadParameter("redundant prefixes detected in events, which will result in event parsers not aligning with their intended prefix (this is a bug)")
 	}
 
 	w, err := e.backend.NewWatcher(ctx, backend.Watch{
@@ -623,31 +612,6 @@ func (p *sessionRecordingConfigParser) parse(event backend.Event) (types.Resourc
 			return nil, trace.Wrap(err)
 		}
 		return ap, nil
-	default:
-		return nil, trace.BadParameter("event %v is not supported", event.Type)
-	}
-}
-
-func newExternalCloudAuditParser() *externalCloudAuditParser {
-	return &externalCloudAuditParser{
-		baseParser: newBaseParser(backend.Key(externalCloudAuditPrefix)),
-	}
-}
-
-type externalCloudAuditParser struct {
-	baseParser
-}
-
-func (p *externalCloudAuditParser) parse(event backend.Event) (types.Resource, error) {
-	switch event.Type {
-	case types.OpDelete:
-		return resourceHeader(event, types.KindExternalCloudAudit, types.V1, 0)
-	case types.OpPut:
-		return services.UnmarshalExternalCloudAudit(event.Item.Value,
-			services.WithResourceID(event.Item.ID),
-			services.WithExpires(event.Item.Expires),
-			services.WithRevision(event.Item.Revision),
-		)
 	default:
 		return nil, trace.BadParameter("event %v is not supported", event.Type)
 	}
@@ -1662,7 +1626,6 @@ func (p *discoveryConfigParser) parse(event backend.Event) (types.Resource, erro
 		return services.UnmarshalDiscoveryConfig(event.Item.Value,
 			services.WithResourceID(event.Item.ID),
 			services.WithExpires(event.Item.Expires),
-			services.WithRevision(event.Item.Revision),
 		)
 	default:
 		return nil, trace.BadParameter("event %v is not supported", event.Type)

@@ -201,63 +201,34 @@ func TestPluginOpsgenieValidation(t *testing.T) {
 	}
 }
 
-func requireBadParameterWith(msg string) require.ErrorAssertionFunc {
-	return func(t require.TestingT, err error, args ...interface{}) {
-		require.True(t, trace.IsBadParameter(err), "error: %v", err)
-		require.Contains(t, err.Error(), msg)
-	}
-}
-
 func TestPluginOktaValidation(t *testing.T) {
-	validSettings := &PluginSpecV1_Okta{
-		Okta: &PluginOktaSettings{
-			OrgUrl:         "https://test.okta.com",
-			EnableUserSync: true,
-		},
-	}
-
-	validCreds := &PluginCredentialsV1{
-		Credentials: &PluginCredentialsV1_StaticCredentialsRef{
-			&PluginStaticCredentialsRef{
-				Labels: map[string]string{
-					"label1": "value1",
-				},
-			},
-		},
-	}
-
 	testCases := []struct {
-		name        string
-		settings    *PluginSpecV1_Okta
-		creds       *PluginCredentialsV1
-		assertErr   require.ErrorAssertionFunc
-		assertValue func(*testing.T, *PluginOktaSettings)
+		name      string
+		settings  *PluginSpecV1_Okta
+		creds     *PluginCredentialsV1
+		assertErr require.ErrorAssertionFunc
 	}{
-		{
-			name:      "valid values are preserved",
-			settings:  validSettings,
-			creds:     validCreds,
-			assertErr: require.NoError,
-			assertValue: func(t *testing.T, settings *PluginOktaSettings) {
-				require.Equal(t, "https://test.okta.com", settings.OrgUrl)
-				require.True(t, settings.EnableUserSync)
-			},
-		},
 		{
 			name: "no settings",
 			settings: &PluginSpecV1_Okta{
 				Okta: nil,
 			},
-			creds:     validCreds,
-			assertErr: requireBadParameterWith("missing Okta settings"),
+			creds: nil,
+			assertErr: func(t require.TestingT, err error, args ...any) {
+				require.True(t, trace.IsBadParameter(err))
+				require.Contains(t, err.Error(), "missing Okta settings")
+			},
 		},
 		{
 			name: "no org URL",
 			settings: &PluginSpecV1_Okta{
 				Okta: &PluginOktaSettings{},
 			},
-			creds:     validCreds,
-			assertErr: requireBadParameterWith("org_url must be set"),
+			creds: nil,
+			assertErr: func(t require.TestingT, err error, args ...any) {
+				require.True(t, trace.IsBadParameter(err))
+				require.Contains(t, err.Error(), "org_url must be set")
+			},
 		},
 		{
 			name: "no credentials inner",
@@ -266,8 +237,11 @@ func TestPluginOktaValidation(t *testing.T) {
 					OrgUrl: "https://test.okta.com",
 				},
 			},
-			creds:     &PluginCredentialsV1{},
-			assertErr: requireBadParameterWith("must be used with the static credentials ref type"),
+			creds: &PluginCredentialsV1{},
+			assertErr: func(t require.TestingT, err error, args ...any) {
+				require.True(t, trace.IsBadParameter(err))
+				require.Contains(t, err.Error(), "must be used with the static credentials ref type")
+			},
 		},
 		{
 			name: "invalid credential type (oauth2)",
@@ -279,7 +253,10 @@ func TestPluginOktaValidation(t *testing.T) {
 			creds: &PluginCredentialsV1{
 				Credentials: &PluginCredentialsV1_Oauth2AccessToken{},
 			},
-			assertErr: requireBadParameterWith("must be used with the static credentials ref type"),
+			assertErr: func(t require.TestingT, err error, args ...any) {
+				require.True(t, trace.IsBadParameter(err))
+				require.Contains(t, err.Error(), "must be used with the static credentials ref type")
+			},
 		},
 		{
 			name: "invalid credentials (static credentials)",
@@ -295,18 +272,29 @@ func TestPluginOktaValidation(t *testing.T) {
 					},
 				},
 			},
-			assertErr: requireBadParameterWith("labels must be specified"),
-		}, {
-			name: "EnableUserSync defaults to false",
+			assertErr: func(t require.TestingT, err error, args ...any) {
+				require.True(t, trace.IsBadParameter(err))
+				require.Contains(t, err.Error(), "labels must be specified")
+			},
+		},
+		{
+			name: "valid credentials (static credentials)",
 			settings: &PluginSpecV1_Okta{
 				Okta: &PluginOktaSettings{
 					OrgUrl: "https://test.okta.com",
 				},
 			},
-			creds:     validCreds,
-			assertErr: require.NoError,
-			assertValue: func(t *testing.T, settings *PluginOktaSettings) {
-				require.False(t, settings.EnableUserSync)
+			creds: &PluginCredentialsV1{
+				Credentials: &PluginCredentialsV1_StaticCredentialsRef{
+					&PluginStaticCredentialsRef{
+						Labels: map[string]string{
+							"label1": "value1",
+						},
+					},
+				},
+			},
+			assertErr: func(t require.TestingT, err error, args ...any) {
+				require.NoError(t, err)
 			},
 		},
 	}
@@ -317,9 +305,6 @@ func TestPluginOktaValidation(t *testing.T) {
 				Settings: tc.settings,
 			}, tc.creds)
 			tc.assertErr(t, plugin.CheckAndSetDefaults())
-			if tc.assertValue != nil {
-				tc.assertValue(t, plugin.Spec.GetOkta())
-			}
 		})
 	}
 }
@@ -703,7 +688,7 @@ func TestPluginDiscordValidation(t *testing.T) {
 		return &PluginSpecV1_Discord{
 			&PluginDiscordSettings{
 				RoleToRecipients: map[string]*DiscordChannels{
-					"*": {ChannelIds: []string{"1234567890"}},
+					"*": &DiscordChannels{ChannelIds: []string{"1234567890"}},
 				},
 			},
 		}

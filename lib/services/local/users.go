@@ -27,7 +27,6 @@ import (
 	"sort"
 	"sync"
 	"time"
-	"unicode/utf8"
 
 	"github.com/gogo/protobuf/jsonpb"
 	"github.com/google/go-cmp/cmp"
@@ -38,8 +37,6 @@ import (
 	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/crypto/ssh"
 
-	apidefaults "github.com/gravitational/teleport/api/defaults"
-	"github.com/gravitational/teleport/api/internalutils/stream"
 	"github.com/gravitational/teleport/api/types"
 	wanpb "github.com/gravitational/teleport/api/types/webauthn"
 	"github.com/gravitational/teleport/api/utils/keys"
@@ -71,157 +68,18 @@ func NewIdentityService(backend backend.Backend) *IdentityService {
 }
 
 // DeleteAllUsers deletes all users
-func (s *IdentityService) DeleteAllUsers(ctx context.Context) error {
+func (s *IdentityService) DeleteAllUsers() error {
 	startKey := backend.ExactKey(webPrefix, usersPrefix)
-	return trace.Wrap(s.DeleteRange(ctx, startKey, backend.RangeEnd(startKey)))
-}
-
-func (s *IdentityService) listUsersWithSecrets(ctx context.Context, pageSize int, pageToken string) ([]types.User, string, error) {
-	rangeStart := backend.Key(webPrefix, usersPrefix, pageToken)
-	rangeEnd := backend.RangeEnd(backend.ExactKey(webPrefix, usersPrefix))
-
-	// Adjust page size, so it can't be too large.
-	if pageSize <= 0 || pageSize > apidefaults.DefaultChunkSize {
-		pageSize = apidefaults.DefaultChunkSize
-	}
-
-	// Artificially inflate the limit to account for user secrets
-	// which have the same prefix.
-	limit := pageSize * 4
-
-	rangeStream := backend.StreamRange(ctx, s.Backend, rangeStart, rangeEnd, limit)
-
-	var (
-		out      []types.User
-		prevUser string
-		items    userItems
-	)
-	for rangeStream.Next() {
-		item := rangeStream.Item()
-
-		name, suffix, err := splitUsernameAndSuffix(string(item.Key))
-		if err != nil {
-			return nil, "", trace.Wrap(err)
-		}
-
-		if prevUser == "" {
-			prevUser = name
-		}
-
-		if name != prevUser {
-			user, err := userFromUserItems(prevUser, items)
-			if err != nil {
-				return nil, "", trace.Wrap(err)
-			}
-
-			out = append(out, user)
-
-			prevUser = name
-			items = userItems{}
-
-			if len(out) == pageSize {
-				break
-			}
-		}
-
-		items.Set(suffix, item)
-	}
-
-	next := rangeStream.Next()
-
-	if len(out) == 0 {
-		// When there is only a single user the transition logic to detect when a user
-		// is complete will never be hit. If the stream is exhausted and the items have
-		// processed a user resource then return it.
-		if !next && items.complete() {
-			user, err := userFromUserItems(prevUser, items)
-			if err != nil {
-				return nil, "", trace.Wrap(err)
-			}
-
-			out = append(out, user)
-		}
-	} else {
-		// If there are no more users it is possible that the previous user being processed
-		// was never added to out because there was no additional user to transition to.
-		// Add the user from the collected items and return the full output.
-		if len(out) != pageSize && out[len(out)-1].GetName() != prevUser {
-			user, err := userFromUserItems(prevUser, items)
-			if err != nil {
-				return nil, "", trace.Wrap(err)
-			}
-
-			out = append(out, user)
-		}
-	}
-
-	var nextToken string
-	// If the stream has more data or while processing the stream the last user
-	// caused a transition but was not added to out we want to send a token so
-	// that the final user may be returned in the next page.
-	if next || len(out) > 0 && out[len(out)-1].GetName() != prevUser {
-		nextToken = nextUserToken(out[len(out)-1])
-	}
-
-	return out, nextToken, trace.Wrap(rangeStream.Done())
-}
-
-// nextUserToken returns the last token for the given user. This
-// allows the listing operation to provide a token which doesn't divulge
-// the next user in the list while still allowing listing to operate
-// without missing any users.
-func nextUserToken(user types.User) string {
-	return string(backend.RangeEnd(backend.ExactKey(user.GetName())))[utf8.RuneLen(backend.Separator):]
-}
-
-// ListUsers returns a page of users.
-func (s *IdentityService) ListUsers(ctx context.Context, pageSize int, pageToken string, withSecrets bool) ([]types.User, string, error) {
-	if withSecrets {
-		users, next, err := s.listUsersWithSecrets(ctx, pageSize, pageToken)
-		return users, next, trace.Wrap(err)
-	}
-
-	rangeStart := backend.Key(webPrefix, usersPrefix, pageToken)
-	rangeEnd := backend.RangeEnd(backend.ExactKey(webPrefix, usersPrefix))
-
-	// Adjust page size, so it can't be too large.
-	if pageSize <= 0 || pageSize > apidefaults.DefaultChunkSize {
-		pageSize = apidefaults.DefaultChunkSize
-	}
-
-	// Artificially inflate the limit to account for user secrets
-	// which have the same prefix.
-	limit := pageSize * 4
-
-	rangeStream := stream.FilterMap(
-		backend.StreamRange(ctx, s.Backend, rangeStart, rangeEnd, limit),
-		func(item backend.Item) (backend.Item, bool) {
-			return item, bytes.HasSuffix(item.Key, []byte(paramsPrefix))
-		})
-
-	var err error
-	userStream := stream.MapWhile(rangeStream, func(item backend.Item) (types.User, bool) {
-		var user types.User
-		user, err = services.UnmarshalUser(item.Value, services.WithRevision(item.Revision))
-		return user, err == nil
-	})
-
-	users, more := stream.Take(userStream, pageSize)
-	var nextToken string
-	if more && userStream.Next() {
-		nextToken = nextUserToken(users[len(users)-1])
-	}
-
-	return users, nextToken, trace.NewAggregate(err, userStream.Done())
+	return s.DeleteRange(context.TODO(), startKey, backend.RangeEnd(startKey))
 }
 
 // GetUsers returns a list of users registered with the local auth server
-func (s *IdentityService) GetUsers(ctx context.Context, withSecrets bool) ([]types.User, error) {
+func (s *IdentityService) GetUsers(withSecrets bool) ([]types.User, error) {
 	if withSecrets {
-		return s.getUsersWithSecrets(ctx)
+		return s.getUsersWithSecrets()
 	}
 	startKey := backend.ExactKey(webPrefix, usersPrefix)
-	result, err := s.GetRange(ctx, startKey, backend.RangeEnd(startKey), backend.NoLimit)
+	result, err := s.GetRange(context.TODO(), startKey, backend.RangeEnd(startKey), backend.NoLimit)
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
@@ -243,9 +101,9 @@ func (s *IdentityService) GetUsers(ctx context.Context, withSecrets bool) ([]typ
 	return out, nil
 }
 
-func (s *IdentityService) getUsersWithSecrets(ctx context.Context) ([]types.User, error) {
-	startKey := backend.ExactKey(webPrefix, usersPrefix)
-	result, err := s.GetRange(ctx, startKey, backend.RangeEnd(startKey), backend.NoLimit)
+func (s *IdentityService) getUsersWithSecrets() ([]types.User, error) {
+	startKey := backend.Key(webPrefix, usersPrefix)
+	result, err := s.GetRange(context.TODO(), startKey, backend.RangeEnd(startKey), backend.NoLimit)
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
@@ -265,23 +123,23 @@ func (s *IdentityService) getUsersWithSecrets(ctx context.Context) ([]types.User
 }
 
 // CreateUser creates user if it does not exist.
-func (s *IdentityService) CreateUser(ctx context.Context, user types.User) (types.User, error) {
+func (s *IdentityService) CreateUser(user types.User) error {
 	if err := services.ValidateUser(user); err != nil {
-		return nil, trace.Wrap(err)
+		return trace.Wrap(err)
 	}
 
 	// Confirm user doesn't exist before creating.
-	_, err := s.GetUser(ctx, user.GetName(), false)
+	_, err := s.GetUser(user.GetName(), false)
 	if !trace.IsNotFound(err) {
 		if err != nil {
-			return nil, trace.Wrap(err)
+			return trace.Wrap(err)
 		}
-		return nil, trace.AlreadyExists("user %q already registered", user.GetName())
+		return trace.AlreadyExists("user %q already registered", user.GetName())
 	}
 
 	value, err := services.MarshalUser(user.WithoutSecrets().(types.User))
 	if err != nil {
-		return nil, trace.Wrap(err)
+		return trace.Wrap(err)
 	}
 
 	item := backend.Item{
@@ -290,35 +148,33 @@ func (s *IdentityService) CreateUser(ctx context.Context, user types.User) (type
 		Expires: user.Expiry(),
 	}
 
-	lease, err := s.Create(ctx, item)
-	if err != nil {
-		return nil, trace.Wrap(err)
+	if _, err = s.Create(context.TODO(), item); err != nil {
+		return trace.Wrap(err)
 	}
 
 	if auth := user.GetLocalAuth(); auth != nil {
-		if err = s.upsertLocalAuthSecrets(ctx, user.GetName(), *auth); err != nil {
-			return nil, trace.Wrap(err)
+		if err = s.upsertLocalAuthSecrets(user.GetName(), *auth); err != nil {
+			return trace.Wrap(err)
 		}
 	}
-	user.SetRevision(lease.Revision)
-	return user, nil
+	return nil
 }
 
 // UpdateUser updates an existing user.
-func (s *IdentityService) UpdateUser(ctx context.Context, user types.User) (types.User, error) {
+func (s *IdentityService) UpdateUser(ctx context.Context, user types.User) error {
 	if err := services.ValidateUser(user); err != nil {
-		return nil, trace.Wrap(err)
+		return trace.Wrap(err)
 	}
 
 	// Confirm user exists before updating.
-	if _, err := s.GetUser(ctx, user.GetName(), false); err != nil {
-		return nil, trace.Wrap(err)
+	if _, err := s.GetUser(user.GetName(), false); err != nil {
+		return trace.Wrap(err)
 	}
 
 	rev := user.GetRevision()
 	value, err := services.MarshalUser(user.WithoutSecrets().(types.User))
 	if err != nil {
-		return nil, trace.Wrap(err)
+		return trace.Wrap(err)
 	}
 	item := backend.Item{
 		Key:      backend.Key(webPrefix, usersPrefix, user.GetName(), paramsPrefix),
@@ -327,18 +183,16 @@ func (s *IdentityService) UpdateUser(ctx context.Context, user types.User) (type
 		ID:       user.GetResourceID(),
 		Revision: rev,
 	}
-	lease, err := s.Update(ctx, item)
+	_, err = s.Update(ctx, item)
 	if err != nil {
-		return nil, trace.Wrap(err)
+		return trace.Wrap(err)
 	}
 	if auth := user.GetLocalAuth(); auth != nil {
-		if err = s.upsertLocalAuthSecrets(ctx, user.GetName(), *auth); err != nil {
-			return nil, trace.Wrap(err)
+		if err = s.upsertLocalAuthSecrets(user.GetName(), *auth); err != nil {
+			return trace.Wrap(err)
 		}
 	}
-	user.SetRevision(lease.Revision)
-	user.SetResourceID(lease.ID)
-	return user, nil
+	return nil
 }
 
 // UpdateAndSwapUser reads an existing user, runs `fn` against it and writes the
@@ -377,14 +231,14 @@ func (s *IdentityService) UpdateAndSwapUser(ctx context.Context, user string, wi
 }
 
 // UpsertUser updates parameters about user, or creates an entry if not exist.
-func (s *IdentityService) UpsertUser(ctx context.Context, user types.User) (types.User, error) {
+func (s *IdentityService) UpsertUser(user types.User) error {
 	if err := services.ValidateUser(user); err != nil {
-		return nil, trace.Wrap(err)
+		return trace.Wrap(err)
 	}
 	rev := user.GetRevision()
 	value, err := services.MarshalUser(user.WithoutSecrets().(types.User))
 	if err != nil {
-		return nil, trace.Wrap(err)
+		return trace.Wrap(err)
 	}
 	item := backend.Item{
 		Key:      backend.Key(webPrefix, usersPrefix, user.GetName(), paramsPrefix),
@@ -393,17 +247,16 @@ func (s *IdentityService) UpsertUser(ctx context.Context, user types.User) (type
 		ID:       user.GetResourceID(),
 		Revision: rev,
 	}
-	lease, err := s.Put(ctx, item)
+	_, err = s.Put(context.TODO(), item)
 	if err != nil {
-		return nil, trace.Wrap(err)
+		return trace.Wrap(err)
 	}
 	if auth := user.GetLocalAuth(); auth != nil {
-		if err = s.upsertLocalAuthSecrets(ctx, user.GetName(), *auth); err != nil {
-			return nil, trace.Wrap(err)
+		if err = s.upsertLocalAuthSecrets(user.GetName(), *auth); err != nil {
+			return trace.Wrap(err)
 		}
 	}
-	user.SetRevision(lease.Revision)
-	return user, nil
+	return nil
 }
 
 // CompareAndSwapUser updates a user, but fails if the value (as exists in the
@@ -440,8 +293,10 @@ func (s *IdentityService) CompareAndSwapUser(ctx context.Context, new, existing 
 		return trace.Wrap(err)
 	}
 	existingItem := backend.Item{
-		Key:   backend.Key(webPrefix, usersPrefix, existing.GetName(), paramsPrefix),
-		Value: existingValue,
+		Key:     backend.Key(webPrefix, usersPrefix, existing.GetName(), paramsPrefix),
+		Value:   existingValue,
+		Expires: existing.Expiry(),
+		ID:      existing.GetResourceID(),
 	}
 
 	_, err = s.CompareAndSwap(ctx, existingItem, newItem)
@@ -453,7 +308,7 @@ func (s *IdentityService) CompareAndSwapUser(ctx context.Context, new, existing 
 	}
 
 	if auth := new.GetLocalAuth(); auth != nil {
-		if err = s.upsertLocalAuthSecrets(ctx, new.GetName(), *auth); err != nil {
+		if err = s.upsertLocalAuthSecrets(new.GetName(), *auth); err != nil {
 			return trace.Wrap(err)
 		}
 	}
@@ -461,9 +316,12 @@ func (s *IdentityService) CompareAndSwapUser(ctx context.Context, new, existing 
 }
 
 // GetUser returns a user by name
-func (s *IdentityService) GetUser(ctx context.Context, user string, withSecrets bool) (types.User, error) {
-	u, _, err := s.getUser(ctx, user, withSecrets)
-	return u, trace.Wrap(err)
+func (s *IdentityService) GetUser(user string, withSecrets bool) (types.User, error) {
+	u, _, err := s.getUser(context.TODO(), user, withSecrets)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+	return u, nil
 }
 
 func (s *IdentityService) getUser(ctx context.Context, user string, withSecrets bool) (types.User, *userItems, error) {
@@ -494,16 +352,15 @@ func (s *IdentityService) getUser(ctx context.Context, user string, withSecrets 
 }
 
 func (s *IdentityService) getUserWithSecrets(ctx context.Context, user string) (types.User, *userItems, error) {
-	startKey := backend.ExactKey(webPrefix, usersPrefix, user)
-	endKey := backend.RangeEnd(startKey)
-	result, err := s.GetRange(ctx, startKey, endKey, backend.NoLimit)
+	startKey := backend.Key(webPrefix, usersPrefix, user)
+	result, err := s.GetRange(ctx, startKey, backend.RangeEnd(startKey), backend.NoLimit)
 	if err != nil {
 		return nil, nil, trace.Wrap(err)
 	}
 
 	var items userItems
 	for _, item := range result.Items {
-		suffix := bytes.TrimPrefix(item.Key, startKey)
+		suffix := bytes.TrimPrefix(item.Key, append(startKey, byte(backend.Separator)))
 		items.Set(string(suffix), item) // Result of Set i
 	}
 
@@ -511,7 +368,7 @@ func (s *IdentityService) getUserWithSecrets(ctx context.Context, user string) (
 	return u, &items, trace.Wrap(err)
 }
 
-func (s *IdentityService) upsertLocalAuthSecrets(ctx context.Context, user string, auth types.LocalAuthSecrets) error {
+func (s *IdentityService) upsertLocalAuthSecrets(user string, auth types.LocalAuthSecrets) error {
 	if len(auth.PasswordHash) > 0 {
 		err := s.UpsertPasswordHash(user, auth.PasswordHash)
 		if err != nil {
@@ -519,12 +376,12 @@ func (s *IdentityService) upsertLocalAuthSecrets(ctx context.Context, user strin
 		}
 	}
 	for _, d := range auth.MFA {
-		if err := s.UpsertMFADevice(ctx, user, d); err != nil {
+		if err := s.UpsertMFADevice(context.TODO(), user, d); err != nil {
 			return trace.Wrap(err)
 		}
 	}
 	if auth.Webauthn != nil {
-		if err := s.UpsertWebauthnLocalAuth(ctx, user, auth.Webauthn); err != nil {
+		if err := s.UpsertWebauthnLocalAuth(context.TODO(), user, auth.Webauthn); err != nil {
 			return trace.Wrap(err)
 		}
 	}
@@ -534,7 +391,7 @@ func (s *IdentityService) upsertLocalAuthSecrets(ctx context.Context, user strin
 // GetUserByOIDCIdentity returns a user by it's specified OIDC Identity, returns first
 // user specified with this identity
 func (s *IdentityService) GetUserByOIDCIdentity(id types.ExternalIdentity) (types.User, error) {
-	users, err := s.GetUsers(context.TODO(), false)
+	users, err := s.GetUsers(false)
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
@@ -551,7 +408,7 @@ func (s *IdentityService) GetUserByOIDCIdentity(id types.ExternalIdentity) (type
 // GetUserBySAMLIdentity returns a user by it's specified OIDC Identity, returns
 // first user specified with this identity.
 func (s *IdentityService) GetUserBySAMLIdentity(id types.ExternalIdentity) (types.User, error) {
-	users, err := s.GetUsers(context.TODO(), false)
+	users, err := s.GetUsers(false)
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
@@ -567,7 +424,7 @@ func (s *IdentityService) GetUserBySAMLIdentity(id types.ExternalIdentity) (type
 
 // GetUserByGithubIdentity returns the first found user with specified Github identity
 func (s *IdentityService) GetUserByGithubIdentity(id types.ExternalIdentity) (types.User, error) {
-	users, err := s.GetUsers(context.TODO(), false)
+	users, err := s.GetUsers(false)
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
@@ -583,7 +440,7 @@ func (s *IdentityService) GetUserByGithubIdentity(id types.ExternalIdentity) (ty
 
 // DeleteUser deletes a user with all the keys from the backend
 func (s *IdentityService) DeleteUser(ctx context.Context, user string) error {
-	_, err := s.GetUser(ctx, user, false)
+	_, err := s.GetUser(user, false)
 	if err != nil {
 		return trace.Wrap(err)
 	}
@@ -600,7 +457,7 @@ func (s *IdentityService) UpsertPasswordHash(username string, hash []byte) error
 	if err != nil {
 		return trace.Wrap(err)
 	}
-	_, err = s.CreateUser(context.TODO(), userPrototype)
+	err = s.CreateUser(userPrototype)
 	if err != nil {
 		if !trace.IsAlreadyExists(err) {
 			return trace.Wrap(err)
@@ -695,7 +552,7 @@ func (s *IdentityService) AddUserLoginAttempt(user string, attempt services.Logi
 
 // GetUserLoginAttempts returns user login attempts
 func (s *IdentityService) GetUserLoginAttempts(user string) ([]services.LoginAttempt, error) {
-	startKey := backend.ExactKey(webPrefix, usersPrefix, user, attemptsPrefix)
+	startKey := backend.Key(webPrefix, usersPrefix, user, attemptsPrefix)
 	result, err := s.GetRange(context.TODO(), startKey, backend.RangeEnd(startKey), backend.NoLimit)
 	if err != nil {
 		return nil, trace.Wrap(err)
@@ -718,7 +575,7 @@ func (s *IdentityService) DeleteUserLoginAttempts(user string) error {
 	if user == "" {
 		return trace.BadParameter("missing username")
 	}
-	startKey := backend.ExactKey(webPrefix, usersPrefix, user, attemptsPrefix)
+	startKey := backend.Key(webPrefix, usersPrefix, user, attemptsPrefix)
 	err := s.DeleteRange(context.TODO(), startKey, backend.RangeEnd(startKey))
 	if err != nil {
 		return trace.Wrap(err)
@@ -1085,7 +942,7 @@ func (s *IdentityService) GetMFADevices(ctx context.Context, user string, withSe
 		return nil, trace.BadParameter("missing parameter user")
 	}
 
-	startKey := backend.ExactKey(webPrefix, usersPrefix, user, mfaDevicePrefix)
+	startKey := backend.Key(webPrefix, usersPrefix, user, mfaDevicePrefix)
 	result, err := s.GetRange(ctx, startKey, backend.RangeEnd(startKey), backend.NoLimit)
 	if err != nil {
 		return nil, trace.Wrap(err)
@@ -1122,53 +979,11 @@ func (s *IdentityService) UpsertOIDCConnector(ctx context.Context, connector typ
 		ID:       connector.GetResourceID(),
 		Revision: rev,
 	}
-	lease, err := s.Put(ctx, item)
+	_, err = s.Put(ctx, item)
 	if err != nil {
 		return trace.Wrap(err)
 	}
-	connector.SetRevision(lease.Revision)
 	return nil
-}
-
-// CreateOIDCConnector creates a new OIDC connector.
-func (s *IdentityService) CreateOIDCConnector(ctx context.Context, connector types.OIDCConnector) (types.OIDCConnector, error) {
-	value, err := services.MarshalOIDCConnector(connector)
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-	item := backend.Item{
-		Key:     backend.Key(webPrefix, connectorsPrefix, oidcPrefix, connectorsPrefix, connector.GetName()),
-		Value:   value,
-		Expires: connector.Expiry(),
-		ID:      connector.GetResourceID(),
-	}
-	lease, err := s.Create(ctx, item)
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-	connector.SetRevision(lease.Revision)
-	return connector, nil
-}
-
-// UpdateOIDCConnector updates an existing OIDC connector.
-func (s *IdentityService) UpdateOIDCConnector(ctx context.Context, connector types.OIDCConnector) (types.OIDCConnector, error) {
-	value, err := services.MarshalOIDCConnector(connector)
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-	item := backend.Item{
-		Key:      backend.Key(webPrefix, connectorsPrefix, oidcPrefix, connectorsPrefix, connector.GetName()),
-		Value:    value,
-		Expires:  connector.Expiry(),
-		ID:       connector.GetResourceID(),
-		Revision: connector.GetRevision(),
-	}
-	lease, err := s.ConditionalUpdate(ctx, item)
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-	connector.SetRevision(lease.Revision)
-	return connector, nil
 }
 
 // DeleteOIDCConnector deletes OIDC Connector by name
@@ -1193,7 +1008,8 @@ func (s *IdentityService) GetOIDCConnector(ctx context.Context, name string, wit
 		}
 		return nil, trace.Wrap(err)
 	}
-	conn, err := services.UnmarshalOIDCConnector(item.Value, services.WithExpires(item.Expires), services.WithRevision(item.Revision))
+	conn, err := services.UnmarshalOIDCConnector(item.Value,
+		services.WithExpires(item.Expires))
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
@@ -1206,14 +1022,15 @@ func (s *IdentityService) GetOIDCConnector(ctx context.Context, name string, wit
 
 // GetOIDCConnectors returns registered connectors, withSecrets adds or removes client secret from return results
 func (s *IdentityService) GetOIDCConnectors(ctx context.Context, withSecrets bool) ([]types.OIDCConnector, error) {
-	startKey := backend.ExactKey(webPrefix, connectorsPrefix, oidcPrefix, connectorsPrefix)
+	startKey := backend.Key(webPrefix, connectorsPrefix, oidcPrefix, connectorsPrefix)
 	result, err := s.GetRange(ctx, startKey, backend.RangeEnd(startKey), backend.NoLimit)
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
 	connectors := make([]types.OIDCConnector, len(result.Items))
 	for i, item := range result.Items {
-		conn, err := services.UnmarshalOIDCConnector(item.Value, services.WithExpires(item.Expires), services.WithRevision(item.Revision))
+		conn, err := services.UnmarshalOIDCConnector(
+			item.Value, services.WithExpires(item.Expires))
 		if err != nil {
 			return nil, trace.Wrap(err)
 		}
@@ -1278,58 +1095,11 @@ func (s *IdentityService) UpsertSAMLConnector(ctx context.Context, connector typ
 		Expires:  connector.Expiry(),
 		Revision: rev,
 	}
-	lease, err := s.Put(ctx, item)
+	_, err = s.Put(ctx, item)
 	if err != nil {
 		return trace.Wrap(err)
 	}
-	connector.SetRevision(lease.Revision)
 	return nil
-}
-
-// UpdateSAMLConnector updates an existing SAML connector
-func (s *IdentityService) UpdateSAMLConnector(ctx context.Context, connector types.SAMLConnector) (types.SAMLConnector, error) {
-	if err := services.ValidateSAMLConnector(connector, nil); err != nil {
-		return nil, trace.Wrap(err)
-	}
-	value, err := services.MarshalSAMLConnector(connector)
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-	item := backend.Item{
-		Key:      backend.Key(webPrefix, connectorsPrefix, samlPrefix, connectorsPrefix, connector.GetName()),
-		Value:    value,
-		Expires:  connector.Expiry(),
-		ID:       connector.GetResourceID(),
-		Revision: connector.GetRevision(),
-	}
-	lease, err := s.ConditionalUpdate(ctx, item)
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-	connector.SetRevision(lease.Revision)
-	return connector, nil
-}
-
-// CreateSAMLConnector creates a new SAML connector.
-func (s *IdentityService) CreateSAMLConnector(ctx context.Context, connector types.SAMLConnector) (types.SAMLConnector, error) {
-	if err := services.ValidateSAMLConnector(connector, nil); err != nil {
-		return nil, trace.Wrap(err)
-	}
-	value, err := services.MarshalSAMLConnector(connector)
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-	item := backend.Item{
-		Key:     backend.Key(webPrefix, connectorsPrefix, samlPrefix, connectorsPrefix, connector.GetName()),
-		Value:   value,
-		Expires: connector.Expiry(),
-	}
-	lease, err := s.Create(ctx, item)
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-	connector.SetRevision(lease.Revision)
-	return connector, nil
 }
 
 // DeleteSAMLConnector deletes SAML Connector by name
@@ -1354,7 +1124,8 @@ func (s *IdentityService) GetSAMLConnector(ctx context.Context, name string, wit
 		}
 		return nil, trace.Wrap(err)
 	}
-	conn, err := services.UnmarshalSAMLConnector(item.Value, services.WithExpires(item.Expires), services.WithRevision(item.Revision))
+	conn, err := services.UnmarshalSAMLConnector(
+		item.Value, services.WithExpires(item.Expires))
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
@@ -1371,14 +1142,15 @@ func (s *IdentityService) GetSAMLConnector(ctx context.Context, name string, wit
 // GetSAMLConnectors returns registered connectors
 // withSecrets includes or excludes private key values from return results
 func (s *IdentityService) GetSAMLConnectors(ctx context.Context, withSecrets bool) ([]types.SAMLConnector, error) {
-	startKey := backend.ExactKey(webPrefix, connectorsPrefix, samlPrefix, connectorsPrefix)
+	startKey := backend.Key(webPrefix, connectorsPrefix, samlPrefix, connectorsPrefix)
 	result, err := s.GetRange(ctx, startKey, backend.RangeEnd(startKey), backend.NoLimit)
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
 	connectors := make([]types.SAMLConnector, len(result.Items))
 	for i, item := range result.Items {
-		conn, err := services.UnmarshalSAMLConnector(item.Value, services.WithExpires(item.Expires), services.WithRevision(item.Revision))
+		conn, err := services.UnmarshalSAMLConnector(
+			item.Value, services.WithExpires(item.Expires))
 		if err != nil {
 			return nil, trace.Wrap(err)
 		}
@@ -1503,71 +1275,23 @@ func (s *IdentityService) UpsertGithubConnector(ctx context.Context, connector t
 		ID:       connector.GetResourceID(),
 		Revision: rev,
 	}
-	lease, err := s.Put(ctx, item)
+	_, err = s.Put(ctx, item)
 	if err != nil {
 		return trace.Wrap(err)
 	}
-	connector.SetRevision(lease.Revision)
 	return nil
-}
-
-// UpdateGithubConnector updates an existing Github connector.
-func (s *IdentityService) UpdateGithubConnector(ctx context.Context, connector types.GithubConnector) (types.GithubConnector, error) {
-	if err := connector.CheckAndSetDefaults(); err != nil {
-		return nil, trace.Wrap(err)
-	}
-	value, err := services.MarshalGithubConnector(connector)
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-	item := backend.Item{
-		Key:      backend.Key(webPrefix, connectorsPrefix, githubPrefix, connectorsPrefix, connector.GetName()),
-		Value:    value,
-		Expires:  connector.Expiry(),
-		ID:       connector.GetResourceID(),
-		Revision: connector.GetRevision(),
-	}
-	lease, err := s.ConditionalUpdate(ctx, item)
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-	connector.SetRevision(lease.Revision)
-	return connector, nil
-}
-
-// CreateGithubConnector creates a new Github connector.
-func (s *IdentityService) CreateGithubConnector(ctx context.Context, connector types.GithubConnector) (types.GithubConnector, error) {
-	if err := connector.CheckAndSetDefaults(); err != nil {
-		return nil, trace.Wrap(err)
-	}
-	value, err := services.MarshalGithubConnector(connector)
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-	item := backend.Item{
-		Key:     backend.Key(webPrefix, connectorsPrefix, githubPrefix, connectorsPrefix, connector.GetName()),
-		Value:   value,
-		Expires: connector.Expiry(),
-		ID:      connector.GetResourceID(),
-	}
-	lease, err := s.Create(ctx, item)
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-	connector.SetRevision(lease.Revision)
-	return connector, nil
 }
 
 // GetGithubConnectors returns all configured Github connectors
 func (s *IdentityService) GetGithubConnectors(ctx context.Context, withSecrets bool) ([]types.GithubConnector, error) {
-	startKey := backend.ExactKey(webPrefix, connectorsPrefix, githubPrefix, connectorsPrefix)
+	startKey := backend.Key(webPrefix, connectorsPrefix, githubPrefix, connectorsPrefix)
 	result, err := s.GetRange(ctx, startKey, backend.RangeEnd(startKey), backend.NoLimit)
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
 	connectors := make([]types.GithubConnector, len(result.Items))
 	for i, item := range result.Items {
-		connector, err := services.UnmarshalGithubConnector(item.Value, services.WithRevision(item.Revision))
+		connector, err := services.UnmarshalGithubConnector(item.Value)
 		if err != nil {
 			return nil, trace.Wrap(err)
 		}
@@ -1591,7 +1315,7 @@ func (s *IdentityService) GetGithubConnector(ctx context.Context, name string, w
 		}
 		return nil, trace.Wrap(err)
 	}
-	connector, err := services.UnmarshalGithubConnector(item.Value, services.WithRevision(item.Revision))
+	connector, err := services.UnmarshalGithubConnector(item.Value)
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
@@ -1724,7 +1448,7 @@ func (s *IdentityService) GetUserRecoveryAttempts(ctx context.Context, user stri
 		return nil, trace.BadParameter("missing parameter user")
 	}
 
-	startKey := backend.ExactKey(webPrefix, usersPrefix, user, recoveryAttemptsPrefix)
+	startKey := backend.Key(webPrefix, usersPrefix, user, recoveryAttemptsPrefix)
 	result, err := s.GetRange(ctx, startKey, backend.RangeEnd(startKey), backend.NoLimit)
 	if err != nil {
 		return nil, trace.Wrap(err)
@@ -1750,7 +1474,7 @@ func (s *IdentityService) DeleteUserRecoveryAttempts(ctx context.Context, user s
 		return trace.BadParameter("missing parameter user")
 	}
 
-	startKey := backend.ExactKey(webPrefix, usersPrefix, user, recoveryAttemptsPrefix)
+	startKey := backend.Key(webPrefix, usersPrefix, user, recoveryAttemptsPrefix)
 	return trace.Wrap(s.DeleteRange(ctx, startKey, backend.RangeEnd(startKey)))
 }
 

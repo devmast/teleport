@@ -22,7 +22,6 @@ import (
 	"time"
 
 	"github.com/gravitational/teleport/api/defaults"
-	"github.com/gravitational/teleport/api/utils"
 )
 
 // WatchStatus contains information about a successful Watch request.
@@ -32,8 +31,6 @@ type WatchStatus interface {
 	GetKinds() []WatchKind
 	// SetKinds sets the list of kinds confirmed by the Watch request.
 	SetKinds([]WatchKind)
-	// Clone performs a deep copy of watch status.
-	Clone() WatchStatus
 }
 
 // GetKind returns the watch status resource kind.
@@ -114,11 +111,6 @@ func (w *WatchStatusV1) GetKinds() []WatchKind {
 // SetKinds sets the list of kinds confirmed by the Watch request.
 func (w *WatchStatusV1) SetKinds(kinds []WatchKind) {
 	w.Spec.Kinds = kinds
-}
-
-// Clone performs a deep-copy of watch status.
-func (w *WatchStatusV1) Clone() WatchStatus {
-	return utils.CloneProtoMsg(w)
 }
 
 // NewWatchStatus returns a new WatchStatus resource.

@@ -347,7 +347,7 @@ func initCluster(ctx context.Context, cfg InitConfig, asrv *Server) error {
 	// same pattern as the rest of the configuration (they are not configuration
 	// singletons). However, we need to keep them around while Telekube uses them.
 	for _, role := range cfg.Roles {
-		if _, err := asrv.UpsertRole(ctx, role); err != nil {
+		if err := asrv.UpsertRole(ctx, role); err != nil {
 			return trace.Wrap(err)
 		}
 		log.Infof("Created role: %v.", role)
@@ -742,15 +742,14 @@ type PresetRoleManager interface {
 	// GetRole returns role by name.
 	GetRole(ctx context.Context, name string) (types.Role, error)
 	// CreateRole creates a role.
-	CreateRole(ctx context.Context, role types.Role) (types.Role, error)
+	CreateRole(ctx context.Context, role types.Role) error
 	// UpsertRole creates or updates a role and emits a related audit event.
-	UpsertRole(ctx context.Context, role types.Role) (types.Role, error)
+	UpsertRole(ctx context.Context, role types.Role) error
 }
 
-// GetPresetRoles returns a list of all preset roles expected to be available on
-// this cluster.
-func GetPresetRoles() []types.Role {
-	return []types.Role{
+// createPresetRoles creates preset role resources
+func createPresetRoles(ctx context.Context, rm PresetRoleManager) error {
+	roles := []types.Role{
 		services.NewPresetGroupAccessRole(),
 		services.NewPresetEditorRole(),
 		services.NewPresetAccessRole(),
@@ -762,11 +761,6 @@ func GetPresetRoles() []types.Role {
 		services.NewPresetDeviceEnrollRole(),
 		services.NewPresetRequireTrustedDeviceRole(),
 	}
-}
-
-// createPresetRoles creates preset role resources
-func createPresetRoles(ctx context.Context, rm PresetRoleManager) error {
-	roles := GetPresetRoles()
 
 	g, gctx := errgroup.WithContext(ctx)
 	for _, role := range roles {
@@ -779,14 +773,14 @@ func createPresetRoles(ctx context.Context, rm PresetRoleManager) error {
 		g.Go(func() error {
 			if types.IsSystemResource(role) {
 				// System resources *always* get reset on every auth startup
-				if _, err := rm.UpsertRole(gctx, role); err != nil {
+				if err := rm.UpsertRole(gctx, role); err != nil {
 					return trace.Wrap(err, "failed upserting system role %s", role.GetName())
 				}
 
 				return nil
 			}
 
-			if _, err := rm.CreateRole(gctx, role); err != nil {
+			if err := rm.CreateRole(gctx, role); err != nil {
 				if !trace.IsAlreadyExists(err) {
 					return trace.WrapWithMessage(err, "failed to create preset role %v", role.GetName())
 				}
@@ -804,7 +798,7 @@ func createPresetRoles(ctx context.Context, rm PresetRoleManager) error {
 					return trace.Wrap(err)
 				}
 
-				if _, err := rm.UpsertRole(gctx, role); err != nil {
+				if err := rm.UpsertRole(gctx, role); err != nil {
 					return trace.WrapWithMessage(err, "failed to update preset role %v", role.GetName())
 				}
 			}
@@ -819,12 +813,12 @@ func createPresetRoles(ctx context.Context, rm PresetRoleManager) error {
 // subset
 type PresetUsers interface {
 	// CreateUser creates a new user record based on the supplied `user` instance.
-	CreateUser(ctx context.Context, user types.User) (types.User, error)
+	CreateUser(ctx context.Context, user types.User) error
 	// GetUser fetches a user from the repository by name, optionally fetching
-	// any associated secrets.
-	GetUser(ctx context.Context, username string, withSecrets bool) (types.User, error)
-	// UpsertUser user creates or updates a user record as needed.
-	UpsertUser(ctx context.Context, user types.User) (types.User, error)
+	// any associated secrets
+	GetUser(username string, withSecrets bool) (types.User, error)
+	// Upsert user creates or updates a user record as needed
+	UpsertUser(user types.User) error
 }
 
 // createPresetUsers creates all of the required user presets. No attempt is
@@ -842,13 +836,13 @@ func createPresetUsers(ctx context.Context, um PresetUsers) error {
 
 		if types.IsSystemResource(user) {
 			// System resources *always* get reset on every auth startup
-			if user, err := um.UpsertUser(ctx, user); err != nil {
+			if err := um.UpsertUser(user); err != nil {
 				return trace.Wrap(err, "failed upserting system user %s", user.GetName())
 			}
 			continue
 		}
 
-		if user, err := um.CreateUser(ctx, user); err != nil && !trace.IsAlreadyExists(err) {
+		if err := um.CreateUser(ctx, user); err != nil && !trace.IsAlreadyExists(err) {
 			return trace.Wrap(err, "failed creating preset user %s", user.GetName())
 		}
 	}

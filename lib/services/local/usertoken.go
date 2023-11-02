@@ -29,7 +29,7 @@ import (
 
 // GetUserTokens returns all user tokens.
 func (s *IdentityService) GetUserTokens(ctx context.Context) ([]types.UserToken, error) {
-	startKey := backend.ExactKey(userTokenPrefix)
+	startKey := backend.Key(userTokenPrefix)
 	result, err := s.GetRange(ctx, startKey, backend.RangeEnd(startKey), backend.NoLimit)
 	if err != nil {
 		return nil, trace.Wrap(err)

@@ -245,7 +245,7 @@ type mockAccessAndIdentity struct {
 	nodeErr                 error
 }
 
-func (m *mockAccessAndIdentity) GetUser(ctx context.Context, name string, withSecrets bool) (types.User, error) {
+func (m *mockAccessAndIdentity) GetUser(name string, withSecrets bool) (types.User, error) {
 	return m.user, nil
 }
 
@@ -256,14 +256,14 @@ func (m *mockAccessAndIdentity) GetRole(ctx context.Context, name string) (types
 	return nil, trace.NotFound("role not found")
 }
 
-func (m *mockAccessAndIdentity) UpsertRole(ctx context.Context, role types.Role) (types.Role, error) {
+func (m *mockAccessAndIdentity) UpsertRole(ctx context.Context, role types.Role) error {
 	m.callCounts["UpsertRole"]++
 	m.role = role
 	m.events.Fire(types.Event{
 		Type:     types.OpPut,
 		Resource: role,
 	})
-	return role, nil
+	return nil
 }
 
 func (m *mockAccessAndIdentity) NewWatcher(ctx context.Context, watch types.Watch) (types.Watcher, error) {
@@ -279,14 +279,14 @@ func (m *mockAccessAndIdentity) NewWatcher(ctx context.Context, watch types.Watc
 	return watcher, nil
 }
 
-func (m *mockAccessAndIdentity) UpdateUser(ctx context.Context, user types.User) (types.User, error) {
+func (m *mockAccessAndIdentity) UpdateUser(ctx context.Context, user types.User) error {
 	m.callCounts["UpdateUser"]++
 	m.user = user
 	m.events.Fire(types.Event{
 		Type:     types.OpPut,
 		Resource: user,
 	})
-	return user, nil
+	return nil
 }
 
 func (m *mockAccessAndIdentity) GetNode(ctx context.Context, namespace, name string) (types.Server, error) {

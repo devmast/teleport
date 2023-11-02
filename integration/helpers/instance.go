@@ -614,21 +614,21 @@ func (i *TeleInstance) CreateWithConf(_ *testing.T, tconf *servicecfg.Config) er
 			roleOptions.ForwardAgent = types.NewBool(true)
 			role.SetOptions(roleOptions)
 
-			role, err = auth.UpsertRole(ctx, role)
+			err = auth.UpsertRole(ctx, role)
 			if err != nil {
 				return trace.Wrap(err)
 			}
 			teleUser.AddRole(role.GetMetadata().Name)
 		} else {
 			for _, role := range user.Roles {
-				role, err := auth.UpsertRole(ctx, role)
+				err := auth.UpsertRole(ctx, role)
 				if err != nil {
 					return trace.Wrap(err)
 				}
 				teleUser.AddRole(role.GetName())
 			}
 		}
-		_, err = auth.UpsertUser(ctx, teleUser)
+		err = auth.UpsertUser(teleUser)
 		if err != nil {
 			return trace.Wrap(err)
 		}
@@ -1394,11 +1394,11 @@ func (i *TeleInstance) CreateWebUser(t *testing.T, username, password string) {
 
 	role := services.RoleForUser(user)
 	role.SetLogins(types.Allow, []string{username})
-	role, err = i.Process.GetAuthServer().UpsertRole(context.Background(), role)
+	err = i.Process.GetAuthServer().UpsertRole(context.Background(), role)
 	require.NoError(t, err)
 
 	user.AddRole(role.GetName())
-	_, err = i.Process.GetAuthServer().CreateUser(context.Background(), user)
+	err = i.Process.GetAuthServer().CreateUser(context.Background(), user)
 	require.NoError(t, err)
 
 	err = i.Process.GetAuthServer().UpsertPassword(user.GetName(), []byte(password))

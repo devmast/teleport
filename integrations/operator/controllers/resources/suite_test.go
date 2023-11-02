@@ -55,8 +55,7 @@ func teleportCreateDummyRole(ctx context.Context, roleName string, tClient *clie
 	metadata.Labels = map[string]string{types.OriginLabel: types.OriginKubernetes}
 	tRole.SetMetadata(metadata)
 
-	_, err = tClient.UpsertRole(ctx, tRole)
-	return trace.Wrap(err)
+	return trace.Wrap(tClient.UpsertRole(ctx, tRole))
 }
 
 func teleportResourceToMap[T types.Resource](resource T) (map[string]interface{}, error) {

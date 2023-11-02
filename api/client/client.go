@@ -44,7 +44,6 @@ import (
 	"github.com/gravitational/teleport/api/breaker"
 	"github.com/gravitational/teleport/api/client/accesslist"
 	"github.com/gravitational/teleport/api/client/discoveryconfig"
-	"github.com/gravitational/teleport/api/client/externalcloudaudit"
 	"github.com/gravitational/teleport/api/client/okta"
 	"github.com/gravitational/teleport/api/client/proto"
 	"github.com/gravitational/teleport/api/client/secreport"
@@ -56,7 +55,6 @@ import (
 	auditlogpb "github.com/gravitational/teleport/api/gen/proto/go/teleport/auditlog/v1"
 	devicepb "github.com/gravitational/teleport/api/gen/proto/go/teleport/devicetrust/v1"
 	discoveryconfigv1 "github.com/gravitational/teleport/api/gen/proto/go/teleport/discoveryconfig/v1"
-	externalcloudauditv1 "github.com/gravitational/teleport/api/gen/proto/go/teleport/externalcloudaudit/v1"
 	integrationpb "github.com/gravitational/teleport/api/gen/proto/go/teleport/integration/v1"
 	kubeproto "github.com/gravitational/teleport/api/gen/proto/go/teleport/kube/v1"
 	loginrulepb "github.com/gravitational/teleport/api/gen/proto/go/teleport/loginrule/v1"
@@ -803,15 +801,6 @@ func (c *Client) SAMLIdPClient() samlidppb.SAMLIdPServiceClient {
 	return samlidppb.NewSAMLIdPServiceClient(c.conn)
 }
 
-// ExternalCloudAuditClient returns an unadorned External Cloud Audit client,
-// using the underlying Auth gRPC connection.
-// Clients connecting to non-Enterprise clusters, or older Teleport versions,
-// still get a external audit client when calling this method, but all RPCs will
-// return "not implemented" errors (as per the default gRPC behavior).
-func (c *Client) ExternalCloudAuditClient() *externalcloudaudit.Client {
-	return externalcloudaudit.NewClient(externalcloudauditv1.NewExternalCloudAuditServiceClient(c.conn))
-}
-
 // TrustClient returns an unadorned Trust client, using the underlying
 // Auth gRPC connection.
 func (c *Client) TrustClient() trustpb.TrustServiceClient {
@@ -846,46 +835,34 @@ func (c *Client) UpdateRemoteCluster(ctx context.Context, rc types.RemoteCluster
 }
 
 // CreateUser creates a new user from the specified descriptor.
-func (c *Client) CreateUser(ctx context.Context, user types.User) (types.User, error) {
+func (c *Client) CreateUser(ctx context.Context, user types.User) error {
 	userV2, ok := user.(*types.UserV2)
 	if !ok {
-		return nil, trace.BadParameter("unsupported user type %T", user)
+		return trace.BadParameter("unsupported user type %T", user)
 	}
 
-	//nolint:staticcheck // SA1019. Kept for backward compatibility.
-	if _, err := c.grpc.CreateUser(ctx, userV2); err != nil {
-		return nil, trace.Wrap(err)
-	}
-
-	created, err := c.GetUser(ctx, user.GetName(), false)
-	return created, trace.Wrap(err)
+	_, err := c.grpc.CreateUser(ctx, userV2)
+	return trace.Wrap(err)
 }
 
 // UpdateUser updates an existing user in a backend.
-func (c *Client) UpdateUser(ctx context.Context, user types.User) (types.User, error) {
+func (c *Client) UpdateUser(ctx context.Context, user types.User) error {
 	userV2, ok := user.(*types.UserV2)
 	if !ok {
-		return nil, trace.BadParameter("unsupported user type %T", user)
+		return trace.BadParameter("unsupported user type %T", user)
 	}
 
-	//nolint:staticcheck // SA1019. Kept for backward compatibility.
 	_, err := c.grpc.UpdateUser(ctx, userV2)
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-
-	updated, err := c.GetUser(ctx, userV2.GetName(), false)
-	return updated, trace.Wrap(err)
+	return trace.Wrap(err)
 }
 
 // GetUser returns a list of usernames registered in the system.
 // withSecrets controls whether authentication details are returned.
-func (c *Client) GetUser(ctx context.Context, name string, withSecrets bool) (types.User, error) {
+func (c *Client) GetUser(name string, withSecrets bool) (types.User, error) {
 	if name == "" {
 		return nil, trace.BadParameter("missing username")
 	}
-	//nolint:staticcheck // SA1019. Kept for backward compatibility.
-	user, err := c.grpc.GetUser(ctx, &proto.GetUserRequest{
+	user, err := c.grpc.GetUser(context.TODO(), &proto.GetUserRequest{
 		Name:        name,
 		WithSecrets: withSecrets,
 	})
@@ -898,7 +875,6 @@ func (c *Client) GetUser(ctx context.Context, name string, withSecrets bool) (ty
 // GetCurrentUser returns current user as seen by the server.
 // Useful especially in the context of remote clusters which perform role and trait mapping.
 func (c *Client) GetCurrentUser(ctx context.Context) (types.User, error) {
-	//nolint:staticcheck // SA1019. Kept for backward compatibility.
 	currentUser, err := c.grpc.GetCurrentUser(ctx, &emptypb.Empty{})
 	if err != nil {
 		return nil, trace.Wrap(err)
@@ -924,9 +900,8 @@ func (c *Client) GetCurrentUserRoles(ctx context.Context) ([]types.Role, error) 
 
 // GetUsers returns a list of users.
 // withSecrets controls whether authentication details are returned.
-func (c *Client) GetUsers(ctx context.Context, withSecrets bool) ([]types.User, error) {
-	//nolint:staticcheck // SA1019. Kept for backward compatibility.
-	stream, err := c.grpc.GetUsers(ctx, &proto.GetUsersRequest{
+func (c *Client) GetUsers(withSecrets bool) ([]types.User, error) {
+	stream, err := c.grpc.GetUsers(context.TODO(), &proto.GetUsersRequest{
 		WithSecrets: withSecrets,
 	})
 	if err != nil {
@@ -942,15 +917,10 @@ func (c *Client) GetUsers(ctx context.Context, withSecrets bool) ([]types.User, 
 	return users, nil
 }
 
-// ListUsers returns a page of users.
-func (c *Client) ListUsers(ctx context.Context, pageSize int, nextToken string, withSecrets bool) ([]types.User, string, error) {
-	return nil, "", trace.NotImplemented("ListUsers is not implemented yet")
-}
-
 // DeleteUser deletes a user by name.
 func (c *Client) DeleteUser(ctx context.Context, user string) error {
-	//nolint:staticcheck // SA1019. Kept for backward compatibility.
-	_, err := c.grpc.DeleteUser(ctx, &proto.DeleteUserRequest{Name: user})
+	req := &proto.DeleteUserRequest{Name: user}
+	_, err := c.grpc.DeleteUser(ctx, req)
 	return trace.Wrap(err)
 }
 
@@ -1605,48 +1575,15 @@ func (c *Client) GetRoles(ctx context.Context) ([]types.Role, error) {
 	return roles, nil
 }
 
-// CreateRole creates a new role.
-func (c *Client) CreateRole(ctx context.Context, role types.Role) (types.Role, error) {
+// UpsertRole creates or updates role
+func (c *Client) UpsertRole(ctx context.Context, role types.Role) error {
 	r, ok := role.(*types.RoleV6)
 	if !ok {
-		return nil, trace.BadParameter("invalid type %T", role)
+		return trace.BadParameter("invalid type %T", role)
 	}
 
-	created, err := c.grpc.CreateRole(ctx, &proto.CreateRoleRequest{Role: r})
-	return created, trace.Wrap(err)
-}
-
-// UpdateRole updates an already existing role.
-func (c *Client) UpdateRole(ctx context.Context, role types.Role) (types.Role, error) {
-	r, ok := role.(*types.RoleV6)
-	if !ok {
-		return nil, trace.BadParameter("invalid type %T", role)
-	}
-
-	updated, err := c.grpc.UpdateRole(ctx, &proto.UpdateRoleRequest{Role: r})
-	return updated, trace.Wrap(err)
-}
-
-// UpsertRole creates or updates a role.
-func (c *Client) UpsertRole(ctx context.Context, role types.Role) (types.Role, error) {
-	r, ok := role.(*types.RoleV6)
-	if !ok {
-		return nil, trace.BadParameter("invalid type %T", role)
-	}
-
-	upserted, err := c.grpc.UpsertRoleV2(ctx, &proto.UpsertRoleRequest{Role: r})
-	if err != nil && trace.IsNotImplemented(err) {
-		//nolint:staticcheck // SA1019. Kept for backward compatibility.
-		_, err := c.grpc.UpsertRole(ctx, r)
-		if err != nil {
-			return nil, trace.Wrap(err)
-		}
-
-		r, err := c.grpc.GetRole(ctx, &proto.GetRoleRequest{Name: role.GetName()})
-		return r, trace.Wrap(err)
-	}
-
-	return upserted, trace.Wrap(err)
+	_, err := c.grpc.UpsertRole(ctx, r)
+	return trace.Wrap(err)
 }
 
 // DeleteRole deletes role by name
@@ -1658,9 +1595,7 @@ func (c *Client) DeleteRole(ctx context.Context, name string) error {
 	return trace.Wrap(err)
 }
 
-// Deprecated: Use AddMFADeviceSync instead.
 func (c *Client) AddMFADevice(ctx context.Context) (proto.AuthService_AddMFADeviceClient, error) {
-	//nolint:staticcheck // SA1019. Kept for backward compatibility testing.
 	stream, err := c.grpc.AddMFADevice(ctx)
 	if err != nil {
 		return nil, trace.Wrap(err)
@@ -1668,7 +1603,6 @@ func (c *Client) AddMFADevice(ctx context.Context) (proto.AuthService_AddMFADevi
 	return stream, nil
 }
 
-// Deprecated: Use DeleteMFADeviceSync instead.
 func (c *Client) DeleteMFADevice(ctx context.Context) (proto.AuthService_DeleteMFADeviceClient, error) {
 	stream, err := c.grpc.DeleteMFADevice(ctx)
 	if err != nil {
@@ -1697,9 +1631,7 @@ func (c *Client) GetMFADevices(ctx context.Context, in *proto.GetMFADevicesReque
 	return resp, nil
 }
 
-// Deprecated: Use GenerateUserCerts instead.
 func (c *Client) GenerateUserSingleUseCerts(ctx context.Context) (proto.AuthService_GenerateUserSingleUseCertsClient, error) {
-	//nolint:staticcheck // SA1019. Kept for backwards compatibility.
 	stream, err := c.grpc.GenerateUserSingleUseCerts(ctx)
 	if err != nil {
 		return nil, trace.Wrap(err)
@@ -1742,39 +1674,13 @@ func (c *Client) GetOIDCConnectors(ctx context.Context, withSecrets bool) ([]typ
 	return oidcConnectors, nil
 }
 
-// CreateOIDCConnector creates an OIDC connector.
-func (c *Client) CreateOIDCConnector(ctx context.Context, connector types.OIDCConnector) (types.OIDCConnector, error) {
-	oidcConnector, ok := connector.(*types.OIDCConnectorV3)
-	if !ok {
-		return nil, trace.BadParameter("invalid type %T", connector)
-	}
-	conn, err := c.grpc.CreateOIDCConnector(ctx, &proto.CreateOIDCConnectorRequest{Connector: oidcConnector})
-	return conn, trace.Wrap(err)
-}
-
-// UpdateOIDCConnector updates an OIDC connector.
-func (c *Client) UpdateOIDCConnector(ctx context.Context, connector types.OIDCConnector) (types.OIDCConnector, error) {
-	oidcConnector, ok := connector.(*types.OIDCConnectorV3)
-	if !ok {
-		return nil, trace.BadParameter("invalid type %T", oidcConnector)
-	}
-	conn, err := c.grpc.UpdateOIDCConnector(ctx, &proto.UpdateOIDCConnectorRequest{Connector: oidcConnector})
-	return conn, trace.Wrap(err)
-}
-
 // UpsertOIDCConnector creates or updates an OIDC connector.
 func (c *Client) UpsertOIDCConnector(ctx context.Context, oidcConnector types.OIDCConnector) error {
 	connector, ok := oidcConnector.(*types.OIDCConnectorV3)
 	if !ok {
 		return trace.BadParameter("invalid type %T", oidcConnector)
 	}
-
-	_, err := c.grpc.UpsertOIDCConnectorV2(ctx, &proto.UpsertOIDCConnectorRequest{Connector: connector})
-	// TODO(tross) DELETE IN 16.0.0
-	if err != nil && trace.IsNotImplemented(err) {
-		_, err := c.grpc.UpsertOIDCConnector(ctx, connector) //nolint:staticcheck // SA1019. Kept for backward compatibility.
-		return trace.Wrap(err)
-	}
+	_, err := c.grpc.UpsertOIDCConnector(ctx, connector)
 	return trace.Wrap(err)
 }
 
@@ -1833,39 +1739,13 @@ func (c *Client) GetSAMLConnectors(ctx context.Context, withSecrets bool) ([]typ
 	return samlConnectors, nil
 }
 
-// CreateSAMLConnector creates a SAML connector.
-func (c *Client) CreateSAMLConnector(ctx context.Context, connector types.SAMLConnector) (types.SAMLConnector, error) {
-	samlConnectorV2, ok := connector.(*types.SAMLConnectorV2)
-	if !ok {
-		return nil, trace.BadParameter("invalid type %T", connector)
-	}
-	conn, err := c.grpc.CreateSAMLConnector(ctx, &proto.CreateSAMLConnectorRequest{Connector: samlConnectorV2})
-	return conn, trace.Wrap(err)
-}
-
-// UpdateSAMLConnector updates a SAML connector.
-func (c *Client) UpdateSAMLConnector(ctx context.Context, connector types.SAMLConnector) (types.SAMLConnector, error) {
-	samlConnectorV2, ok := connector.(*types.SAMLConnectorV2)
-	if !ok {
-		return nil, trace.BadParameter("invalid type %T", connector)
-	}
-	conn, err := c.grpc.UpdateSAMLConnector(ctx, &proto.UpdateSAMLConnectorRequest{Connector: samlConnectorV2})
-	return conn, trace.Wrap(err)
-}
-
 // UpsertSAMLConnector creates or updates a SAML connector.
 func (c *Client) UpsertSAMLConnector(ctx context.Context, connector types.SAMLConnector) error {
-	samlConnector, ok := connector.(*types.SAMLConnectorV2)
+	samlConnectorV2, ok := connector.(*types.SAMLConnectorV2)
 	if !ok {
 		return trace.BadParameter("invalid type %T", connector)
 	}
-
-	_, err := c.grpc.UpsertSAMLConnectorV2(ctx, &proto.UpsertSAMLConnectorRequest{Connector: samlConnector})
-	// TODO(tross) DELETE IN 16.0.0
-	if err != nil && trace.IsNotImplemented(err) {
-		_, err := c.grpc.UpsertSAMLConnector(ctx, samlConnector) //nolint:staticcheck // SA1019. Kept for backward compatibility.
-		return trace.Wrap(err)
-	}
+	_, err := c.grpc.UpsertSAMLConnector(ctx, samlConnectorV2)
 	return trace.Wrap(err)
 }
 
@@ -1924,38 +1804,13 @@ func (c *Client) GetGithubConnectors(ctx context.Context, withSecrets bool) ([]t
 	return githubConnectors, nil
 }
 
-// CreateGithubConnector creates a Github connector.
-func (c *Client) CreateGithubConnector(ctx context.Context, connector types.GithubConnector) (types.GithubConnector, error) {
-	githubConnector, ok := connector.(*types.GithubConnectorV3)
-	if !ok {
-		return nil, trace.BadParameter("invalid type %T", connector)
-	}
-	conn, err := c.grpc.CreateGithubConnector(ctx, &proto.CreateGithubConnectorRequest{Connector: githubConnector})
-	return conn, trace.Wrap(err)
-}
-
-// UpdateGithubConnector updates a Github connector.
-func (c *Client) UpdateGithubConnector(ctx context.Context, connector types.GithubConnector) (types.GithubConnector, error) {
-	githubConnector, ok := connector.(*types.GithubConnectorV3)
-	if !ok {
-		return nil, trace.BadParameter("invalid type %T", connector)
-	}
-	conn, err := c.grpc.UpdateGithubConnector(ctx, &proto.UpdateGithubConnectorRequest{Connector: githubConnector})
-	return conn, trace.Wrap(err)
-}
-
 // UpsertGithubConnector creates or updates a Github connector.
 func (c *Client) UpsertGithubConnector(ctx context.Context, connector types.GithubConnector) error {
 	githubConnector, ok := connector.(*types.GithubConnectorV3)
 	if !ok {
 		return trace.BadParameter("invalid type %T", connector)
 	}
-	_, err := c.grpc.UpsertGithubConnectorV2(ctx, &proto.UpsertGithubConnectorRequest{Connector: githubConnector})
-	// TODO(tross) DELETE IN 16.0.0
-	if err != nil && trace.IsNotImplemented(err) {
-		_, err := c.grpc.UpsertGithubConnector(ctx, githubConnector) //nolint:staticcheck // SA1019. Kept for backward compatibility testing.
-		return trace.Wrap(err)
-	}
+	_, err := c.grpc.UpsertGithubConnector(ctx, githubConnector)
 	return trace.Wrap(err)
 }
 

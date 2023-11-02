@@ -16,5 +16,3 @@ limitations under the License.
 
 import FieldSelect from './FieldSelect';
 export default FieldSelect;
-
-export { FieldSelectCreatable } from './FieldSelectCreatable';

@@ -31,7 +31,6 @@ import (
 	loginrulepb "github.com/gravitational/teleport/api/gen/proto/go/teleport/loginrule/v1"
 	"github.com/gravitational/teleport/api/types"
 	"github.com/gravitational/teleport/api/types/discoveryconfig"
-	"github.com/gravitational/teleport/api/types/externalcloudaudit"
 	"github.com/gravitational/teleport/api/types/secreports"
 	apiutils "github.com/gravitational/teleport/api/utils"
 	"github.com/gravitational/teleport/lib/asciitable"
@@ -986,7 +985,6 @@ func (c *integrationCollection) resources() (r []types.Resource) {
 	}
 	return r
 }
-
 func (c *integrationCollection) writeText(w io.Writer, verbose bool) error {
 	sort.Sort(types.Integrations(c.integrations))
 	var rows [][]string
@@ -1002,37 +1000,6 @@ func (c *integrationCollection) writeText(w io.Writer, verbose bool) error {
 		})
 	}
 	headers := []string{"Name", "Type", "Spec"}
-	t := asciitable.MakeTable(headers, rows...)
-	_, err := t.AsBuffer().WriteTo(w)
-	return trace.Wrap(err)
-}
-
-type externalCloudAuditCollection struct {
-	externalCloudAudits []*externalcloudaudit.ExternalCloudAudit
-}
-
-func (c *externalCloudAuditCollection) resources() (r []types.Resource) {
-	for _, a := range c.externalCloudAudits {
-		r = append(r, a)
-	}
-	return r
-}
-
-func (c *externalCloudAuditCollection) writeText(w io.Writer, verbose bool) error {
-	var rows [][]string
-	for _, a := range c.externalCloudAudits {
-		rows = append(rows, []string{
-			a.GetName(),
-			a.Spec.IntegrationName,
-			a.Spec.SessionsRecordingsURI,
-			a.Spec.AuditEventsLongTermURI,
-			a.Spec.AthenaResultsURI,
-			a.Spec.AthenaWorkgroup,
-			a.Spec.GlueDatabase,
-			a.Spec.GlueTable,
-		})
-	}
-	headers := []string{"Name", "IntegrationName", "SessionsRecordingsURI", "AuditEventsLongTermURI", "AthenaResultsURI", "AthenaWorkgroup", "GlueDatabase", "GlueTable"}
 	t := asciitable.MakeTable(headers, rows...)
 	_, err := t.AsBuffer().WriteTo(w)
 	return trace.Wrap(err)
@@ -1293,27 +1260,6 @@ func (c *securityReportCollection) writeText(w io.Writer, verbose bool) error {
 			auditQueriesNames = append(auditQueriesNames, k.Name)
 		}
 		t.AddRow([]string{v.GetName(), v.Spec.Title, strings.Join(auditQueriesNames, ", "), v.Spec.Description})
-	}
-	_, err := t.AsBuffer().WriteTo(w)
-	return trace.Wrap(err)
-}
-
-type serverInfoCollection struct {
-	serverInfos []types.ServerInfo
-}
-
-func (c *serverInfoCollection) resources() []types.Resource {
-	r := make([]types.Resource, len(c.serverInfos))
-	for i, resource := range c.serverInfos {
-		r[i] = resource
-	}
-	return r
-}
-
-func (c *serverInfoCollection) writeText(w io.Writer, verbose bool) error {
-	t := asciitable.MakeTable([]string{"Name", "Labels"})
-	for _, si := range c.serverInfos {
-		t.AddRow([]string{si.GetName(), printMetadataLabels(si.GetNewLabels())})
 	}
 	_, err := t.AsBuffer().WriteTo(w)
 	return trace.Wrap(err)

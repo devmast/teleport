@@ -18,21 +18,27 @@ package teleport.devicetrust.v1;
 
 option go_package = "github.com/gravitational/teleport/api/gen/proto/go/teleport/devicetrust/v1;devicetrustv1";
 
-// Superseded by ResourceUsageService.GetUsage.
+// AccountUsageType is the type of the underlying account, either limitless or
+// limit-based.
 enum AccountUsageType {
   ACCOUNT_USAGE_TYPE_UNSPECIFIED = 0;
   ACCOUNT_USAGE_TYPE_UNLIMITED = 1;
   ACCOUNT_USAGE_TYPE_USAGE_BASED = 2;
 }
 
-// Superseded by ResourceUsageService.GetUsage.
+// DevicesUsage holds aggregated information about trusted device usage.
 message DevicesUsage {
-  reserved 1; // AccountUsageType account_usage_type
-  reserved "account_usage_type";
+  // Usage type of the underlying account.
+  // UNLIMITED accounts have no limits on the number of trusted devices,
+  // therefore all usage-based limits are data are zeroed when read.
+  AccountUsageType account_usage_type = 1;
 
-  reserved 2; // int32 devices_usage_limit
-  reserved "devices_usage_limit";
+  // Devices usage limit.
+  // Always zero if the usage type is UNLIMITED.
+  int32 devices_usage_limit = 2;
 
-  reserved 3; // int32 devices_in_use
-  reserved "devices_in_use";
+  // Devices in use.
+  // May be greater than [devices_usage_limit] in some cases.
+  // Always zero if the usage type is UNLIMITED.
+  int32 devices_in_use = 3;
 }

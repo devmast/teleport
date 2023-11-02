@@ -53,7 +53,6 @@ type Metadata struct {
 	// expires is a global expiry time header can be set on any resource in the
 	// system.
 	Expires *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=expires,proto3" json:"expires,omitempty"`
-	// ID is a record ID
 	// Deprecated: Use revision instead.
 	//
 	// Deprecated: Marked as deprecated in teleport/header/v1/metadata.proto.

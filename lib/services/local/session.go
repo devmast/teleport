@@ -78,7 +78,7 @@ func (s *IdentityService) ListAppSessions(ctx context.Context, pageSize int, pag
 
 // GetSnowflakeSessions gets all Snowflake web sessions.
 func (s *IdentityService) GetSnowflakeSessions(ctx context.Context) ([]types.WebSession, error) {
-	startKey := backend.ExactKey(snowflakePrefix, sessionsPrefix)
+	startKey := backend.Key(snowflakePrefix, sessionsPrefix)
 	result, err := s.GetRange(ctx, startKey, backend.RangeEnd(startKey), backend.NoLimit)
 	if err != nil {
 		return nil, trace.Wrap(err)
@@ -103,7 +103,7 @@ func (s *IdentityService) ListSAMLIdPSessions(ctx context.Context, pageSize int,
 // listSessions gets a paginated list of sessions.
 func (s *IdentityService) listSessions(ctx context.Context, pageSize int, pageToken, user string, keyPrefix ...string) ([]types.WebSession, string, error) {
 	rangeStart := backend.Key(append(keyPrefix, pageToken)...)
-	rangeEnd := backend.RangeEnd(backend.ExactKey(keyPrefix...))
+	rangeEnd := backend.RangeEnd(backend.Key(keyPrefix...))
 
 	// Adjust page size, so it can't be too large.
 	if pageSize <= 0 || pageSize > maxPageSize {
@@ -279,7 +279,7 @@ func (s *IdentityService) DeleteUserSAMLIdPSessions(ctx context.Context, user st
 
 // DeleteAllAppSessions removes all application web sessions.
 func (s *IdentityService) DeleteAllAppSessions(ctx context.Context) error {
-	startKey := backend.ExactKey(appsPrefix, sessionsPrefix)
+	startKey := backend.Key(appsPrefix, sessionsPrefix)
 	if err := s.DeleteRange(ctx, startKey, backend.RangeEnd(startKey)); err != nil {
 		return trace.Wrap(err)
 	}
@@ -288,7 +288,7 @@ func (s *IdentityService) DeleteAllAppSessions(ctx context.Context) error {
 
 // DeleteAllSnowflakeSessions removes all Snowflake web sessions.
 func (s *IdentityService) DeleteAllSnowflakeSessions(ctx context.Context) error {
-	startKey := backend.ExactKey(snowflakePrefix, sessionsPrefix)
+	startKey := backend.Key(snowflakePrefix, sessionsPrefix)
 	if err := s.DeleteRange(ctx, startKey, backend.RangeEnd(startKey)); err != nil {
 		return trace.Wrap(err)
 	}
@@ -297,7 +297,7 @@ func (s *IdentityService) DeleteAllSnowflakeSessions(ctx context.Context) error 
 
 // DeleteAllSAMLIdPSessions removes all SAML IdP sessions.
 func (s *IdentityService) DeleteAllSAMLIdPSessions(ctx context.Context) error {
-	startKey := backend.ExactKey(samlIdPPrefix, sessionsPrefix)
+	startKey := backend.Key(samlIdPPrefix, sessionsPrefix)
 	if err := s.DeleteRange(ctx, startKey, backend.RangeEnd(startKey)); err != nil {
 		return trace.Wrap(err)
 	}
@@ -328,8 +328,8 @@ func (r *webSessions) Get(ctx context.Context, req types.GetWebSessionRequest) (
 
 // List gets all regular web sessions.
 func (r *webSessions) List(ctx context.Context) (out []types.WebSession, err error) {
-	startKey := backend.ExactKey(webPrefix, sessionsPrefix)
-	result, err := r.backend.GetRange(ctx, startKey, backend.RangeEnd(startKey), backend.NoLimit)
+	key := backend.Key(webPrefix, sessionsPrefix)
+	result, err := r.backend.GetRange(ctx, key, backend.RangeEnd(key), backend.NoLimit)
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
@@ -380,14 +380,14 @@ func (r *webSessions) Delete(ctx context.Context, req types.DeleteWebSessionRequ
 
 // DeleteAll removes all regular web sessions.
 func (r *webSessions) DeleteAll(ctx context.Context) error {
-	startKey := backend.ExactKey(webPrefix, sessionsPrefix)
+	startKey := backend.Key(webPrefix, sessionsPrefix)
 	return trace.Wrap(r.backend.DeleteRange(ctx, startKey, backend.RangeEnd(startKey)))
 }
 
 // DELETE IN 7.x.
 // listLegacySessions lists web sessions under a legacy path /web/users/<user>/sessions/<id>
 func (r *webSessions) listLegacySessions(ctx context.Context) ([]types.WebSession, error) {
-	startKey := backend.ExactKey(webPrefix, usersPrefix)
+	startKey := backend.Key(webPrefix, usersPrefix)
 	result, err := r.backend.GetRange(ctx, startKey, backend.RangeEnd(startKey), backend.NoLimit)
 	if err != nil {
 		return nil, trace.Wrap(err)
@@ -438,8 +438,8 @@ func (r *webTokens) Get(ctx context.Context, req types.GetWebTokenRequest) (type
 
 // List gets all web tokens.
 func (r *webTokens) List(ctx context.Context) (out []types.WebToken, err error) {
-	startKey := backend.ExactKey(webPrefix, tokensPrefix)
-	result, err := r.backend.GetRange(ctx, startKey, backend.RangeEnd(startKey), backend.NoLimit)
+	key := backend.Key(webPrefix, tokensPrefix)
+	result, err := r.backend.GetRange(ctx, key, backend.RangeEnd(key), backend.NoLimit)
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
@@ -484,7 +484,7 @@ func (r *webTokens) Delete(ctx context.Context, req types.DeleteWebTokenRequest)
 
 // DeleteAll removes all web tokens.
 func (r *webTokens) DeleteAll(ctx context.Context) error {
-	startKey := backend.ExactKey(webPrefix, tokensPrefix)
+	startKey := backend.Key(webPrefix, tokensPrefix)
 	if err := r.backend.DeleteRange(ctx, startKey, backend.RangeEnd(startKey)); err != nil {
 		return trace.Wrap(err)
 	}

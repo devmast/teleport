@@ -38,38 +38,36 @@ import (
 // UserGetter is responsible for getting users
 type UserGetter interface {
 	// GetUser returns a user by name
-	GetUser(ctx context.Context, user string, withSecrets bool) (types.User, error)
+	GetUser(user string, withSecrets bool) (types.User, error)
 }
 
 // UsersService is responsible for basic user management
 type UsersService interface {
 	UserGetter
 	// UpdateUser updates an existing user.
-	UpdateUser(ctx context.Context, user types.User) (types.User, error)
+	UpdateUser(ctx context.Context, user types.User) error
 	// UpdateAndSwapUser reads an existing user, runs `fn` against it and writes
 	// the result to storage. Return `false` from `fn` to avoid storage changes.
 	// Roughly equivalent to [GetUser] followed by [CompareAndSwapUser].
 	// Returns the storage user.
 	UpdateAndSwapUser(ctx context.Context, user string, withSecrets bool, fn func(types.User) (changed bool, err error)) (types.User, error)
 	// UpsertUser updates parameters about user
-	UpsertUser(ctx context.Context, user types.User) (types.User, error)
+	UpsertUser(user types.User) error
 	// CompareAndSwapUser updates an existing user, but fails if the user does
 	// not match an expected backend value.
 	CompareAndSwapUser(ctx context.Context, new, existing types.User) error
 	// DeleteUser deletes a user with all the keys from the backend
 	DeleteUser(ctx context.Context, user string) error
 	// GetUsers returns a list of users registered with the local auth server
-	GetUsers(ctx context.Context, withSecrets bool) ([]types.User, error)
-	// ListUsers returns a page of users.
-	ListUsers(ctx context.Context, pageSize int, nextToken string, withSecrets bool) ([]types.User, string, error)
+	GetUsers(withSecrets bool) ([]types.User, error)
 	// DeleteAllUsers deletes all users
-	DeleteAllUsers(ctx context.Context) error
+	DeleteAllUsers() error
 }
 
 // Identity is responsible for managing user entries and external identities
 type Identity interface {
 	// CreateUser creates user, only if the user entry does not exist
-	CreateUser(ctx context.Context, user types.User) (types.User, error)
+	CreateUser(user types.User) error
 
 	// UsersService implements most methods
 	UsersService
@@ -166,11 +164,7 @@ type Identity interface {
 	// DeleteMFADevice deletes an MFA device for the user by ID.
 	DeleteMFADevice(ctx context.Context, user, id string) error
 
-	// CreateOIDCConnector creates a new OIDC connector.
-	CreateOIDCConnector(ctx context.Context, connector types.OIDCConnector) (types.OIDCConnector, error)
-	// UpdateOIDCConnector updates an existing OIDC connector.
-	UpdateOIDCConnector(ctx context.Context, connector types.OIDCConnector) (types.OIDCConnector, error)
-	// UpsertOIDCConnector updates or creates an OIDC connector.
+	// UpsertOIDCConnector upserts OIDC Connector
 	UpsertOIDCConnector(ctx context.Context, connector types.OIDCConnector) error
 
 	// DeleteOIDCConnector deletes OIDC Connector
@@ -188,11 +182,7 @@ type Identity interface {
 	// GetOIDCAuthRequest returns OIDC auth request if found
 	GetOIDCAuthRequest(ctx context.Context, stateToken string) (*types.OIDCAuthRequest, error)
 
-	// CreateSAMLConnector creates a new SAML connector.
-	CreateSAMLConnector(ctx context.Context, connector types.SAMLConnector) (types.SAMLConnector, error)
-	// UpdateSAMLConnector updates an existing SAML connector
-	UpdateSAMLConnector(ctx context.Context, connector types.SAMLConnector) (types.SAMLConnector, error)
-	// UpsertSAMLConnector updates or creates a SAML connector
+	// UpsertSAMLConnector upserts SAML Connector
 	UpsertSAMLConnector(ctx context.Context, connector types.SAMLConnector) error
 
 	// DeleteSAMLConnector deletes OIDC Connector
@@ -216,11 +206,7 @@ type Identity interface {
 	// GetSSODiagnosticInfo returns SSO diagnostic info records.
 	GetSSODiagnosticInfo(ctx context.Context, authKind string, authRequestID string) (*types.SSODiagnosticInfo, error)
 
-	// CreateGithubConnector creates a new Github connector.
-	CreateGithubConnector(ctx context.Context, connector types.GithubConnector) (types.GithubConnector, error)
-	// UpdateGithubConnector updates an existing Github connector.
-	UpdateGithubConnector(ctx context.Context, connector types.GithubConnector) (types.GithubConnector, error)
-	// UpsertGithubConnector creates or updates a Github connector.
+	// UpsertGithubConnector creates or updates a new Github connector
 	UpsertGithubConnector(ctx context.Context, connector types.GithubConnector) error
 
 	// GetGithubConnectors returns all configured Github connectors

@@ -123,11 +123,11 @@ func (l *TLSListener) Serve() error {
 		}
 		if utils.IsUseOfClosedNetworkError(err) {
 			<-l.context.Done()
-			return nil
+			return trace.Wrap(err, "listener is closed")
 		}
 		select {
 		case <-l.context.Done():
-			return nil
+			return trace.Wrap(net.ErrClosed, "listener is closed")
 		case <-time.After(5 * time.Second):
 		}
 	}

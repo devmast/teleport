@@ -51,7 +51,6 @@ import (
 	"github.com/sirupsen/logrus"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace"
 	"golang.org/x/crypto/ssh"
-	"golang.org/x/exp/maps"
 	"golang.org/x/exp/slices"
 	"golang.org/x/time/rate"
 	"google.golang.org/protobuf/types/known/durationpb"
@@ -80,7 +79,6 @@ import (
 	wantypes "github.com/gravitational/teleport/lib/auth/webauthntypes"
 	"github.com/gravitational/teleport/lib/authz"
 	"github.com/gravitational/teleport/lib/backend"
-	"github.com/gravitational/teleport/lib/cache"
 	"github.com/gravitational/teleport/lib/circleci"
 	"github.com/gravitational/teleport/lib/defaults"
 	"github.com/gravitational/teleport/lib/events"
@@ -445,10 +443,6 @@ func NewServer(cfg *InitConfig, opts ...ServerOption) (*Server, error) {
 	}
 
 	as.RegisterLoginHook(as.ulsGenerator.LoginHook(services.UserLoginStates))
-
-	if _, ok := as.getCache(); !ok {
-		log.Warn("Auth server starting without cache (may have negative performance implications).")
-	}
 
 	return &as, nil
 }
@@ -2742,8 +2736,8 @@ func (a *Server) getSigningCAs(ctx context.Context, domainName string, caType ty
 // this is done to avoid potential user lockouts due to backend failures
 // In case if user exceeds defaults.MaxLoginAttempts
 // the user account will be locked for defaults.AccountLockInterval
-func (a *Server) WithUserLock(ctx context.Context, username string, authenticateFn func() error) error {
-	user, err := a.Services.GetUser(ctx, username, false)
+func (a *Server) WithUserLock(username string, authenticateFn func() error) error {
+	user, err := a.Services.GetUser(username, false)
 	if err != nil {
 		if trace.IsNotFound(err) {
 			// If user is not found, still call authenticateFn. It should
@@ -2804,7 +2798,7 @@ func (a *Server) WithUserLock(ctx context.Context, username string, authenticate
 	log.Debug(fmt.Sprintf("%v exceeds %v failed login attempts, locked until %v",
 		username, defaults.MaxLoginAttempts, apiutils.HumanTimeFormat(lockUntil)))
 	user.SetLocked(lockUntil, "user has exceeded maximum failed login attempts")
-	_, err = a.UpsertUser(ctx, user)
+	err = a.UpsertUser(user)
 	if err != nil {
 		log.Error(trace.DebugReport(err))
 		return trace.Wrap(fnErr)
@@ -2847,7 +2841,7 @@ func (a *Server) CreateAuthenticateChallenge(ctx context.Context, req *proto.Cre
 	case *proto.CreateAuthenticateChallengeRequest_UserCredentials:
 		username = req.GetUserCredentials().GetUsername()
 
-		if err := a.WithUserLock(ctx, username, func() error {
+		if err := a.WithUserLock(username, func() error {
 			return a.checkPasswordWOToken(username, req.GetUserCredentials().GetPassword())
 		}); err != nil {
 			return nil, trace.Wrap(err)
@@ -2887,81 +2881,32 @@ func (a *Server) CreateAuthenticateChallenge(ctx context.Context, req *proto.Cre
 
 // CreateRegisterChallenge implements AuthService.CreateRegisterChallenge.
 func (a *Server) CreateRegisterChallenge(ctx context.Context, req *proto.CreateRegisterChallengeRequest) (*proto.MFARegisterChallenge, error) {
-	var token types.UserToken
-	var username string
-	switch {
-	case req.TokenID != "": // Web UI or account recovery flows.
-		var err error
-		token, err = a.GetUserToken(ctx, req.GetTokenID())
-		if err != nil {
-			log.Error(trace.DebugReport(err))
-			return nil, trace.AccessDenied("invalid token")
-		}
+	token, err := a.GetUserToken(ctx, req.GetTokenID())
+	if err != nil {
+		log.Error(trace.DebugReport(err))
+		return nil, trace.AccessDenied("invalid token")
+	}
 
-		allowedTokenTypes := []string{
-			UserTokenTypePrivilege,
-			UserTokenTypePrivilegeException,
-			UserTokenTypeResetPassword,
-			UserTokenTypeResetPasswordInvite,
-			UserTokenTypeRecoveryApproved,
-		}
-		if err := a.verifyUserToken(token, allowedTokenTypes...); err != nil {
-			return nil, trace.AccessDenied("invalid token")
-		}
-		username = token.GetUser()
+	allowedTokenTypes := []string{
+		UserTokenTypePrivilege,
+		UserTokenTypePrivilegeException,
+		UserTokenTypeResetPassword,
+		UserTokenTypeResetPasswordInvite,
+		UserTokenTypeRecoveryApproved,
+	}
 
-	case req.ExistingMFAResponse != nil: // Authenticated user without token, tsh.
-		var err error
-		username, err = authz.GetClientUsername(ctx)
-		if err != nil {
-			return nil, trace.Wrap(err)
-		}
-
-		if _, err := a.validateMFAAuthResponseForRegister(ctx, req.ExistingMFAResponse, username, false /* passwordless */); err != nil {
-			return nil, trace.Wrap(err)
-		}
-
-		// Create a special token for OTP registrations. The token doubles as
-		// temporary storage for the OTP secret, like in the branch above.
-		// This is OK because the user just did an MFA check.
-		if req.GetDeviceType() != proto.DeviceType_DEVICE_TYPE_TOTP {
-			break // break from switch
-		}
-
-		token, err = a.createTOTPPrivilegeToken(ctx, username)
-		if err != nil {
-			return nil, trace.Wrap(err)
-		}
-
-	default:
-		return nil, trace.BadParameter("either a token or an MFA response are required")
+	if err := a.verifyUserToken(token, allowedTokenTypes...); err != nil {
+		return nil, trace.AccessDenied("invalid token")
 	}
 
 	regChal, err := a.createRegisterChallenge(ctx, &newRegisterChallengeRequest{
-		username:    username,
+		username:    token.GetUser(),
 		token:       token,
 		deviceType:  req.GetDeviceType(),
 		deviceUsage: req.GetDeviceUsage(),
 	})
+
 	return regChal, trace.Wrap(err)
-}
-
-func (a *Server) createTOTPPrivilegeToken(ctx context.Context, username string) (types.UserToken, error) {
-	tokenReq := CreateUserTokenRequest{
-		Name: username,
-		Type: userTokenTypePrivilegeOTP,
-	}
-	if err := tokenReq.CheckAndSetDefaults(); err != nil {
-		return nil, trace.Wrap(err)
-	}
-
-	token, err := a.newUserToken(tokenReq)
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-
-	token, err = a.CreateUserToken(ctx, token)
-	return token, trace.Wrap(err)
 }
 
 type newRegisterChallengeRequest struct {
@@ -2995,34 +2940,25 @@ func (a *Server) createRegisterChallenge(ctx context.Context, req *newRegisterCh
 			return nil, trace.Wrap(err)
 		}
 
-		// TODO(codingllama): Once AddMFADeviceSync is no more all requests should
-		//  have a token. If they don't, then the secret is "lost" to the server.
-		var qrCode []byte
-		var challengeID string
-		if token := req.token; token != nil {
-			secrets, err := a.createTOTPUserTokenSecrets(ctx, token, otpKey)
+		challenge := &proto.TOTPRegisterChallenge{
+			Secret:        otpKey.Secret(),
+			Issuer:        otpKey.Issuer(),
+			PeriodSeconds: uint32(otpOpts.Period),
+			Algorithm:     otpOpts.Algorithm.String(),
+			Digits:        uint32(otpOpts.Digits.Length()),
+			Account:       otpKey.AccountName(),
+		}
+
+		if req.token != nil {
+			secrets, err := a.createTOTPUserTokenSecrets(ctx, req.token, otpKey)
 			if err != nil {
 				return nil, trace.Wrap(err)
 			}
 
-			qrCode = secrets.GetQRCode()
-			challengeID = token.GetName()
+			challenge.QRCode = secrets.GetQRCode()
 		}
 
-		return &proto.MFARegisterChallenge{
-			Request: &proto.MFARegisterChallenge_TOTP{
-				TOTP: &proto.TOTPRegisterChallenge{
-					Secret:        otpKey.Secret(),
-					Issuer:        otpKey.Issuer(),
-					PeriodSeconds: uint32(otpOpts.Period),
-					Algorithm:     otpOpts.Algorithm.String(),
-					Digits:        uint32(otpOpts.Digits.Length()),
-					Account:       otpKey.AccountName(),
-					QRCode:        qrCode,
-					ID:            challengeID,
-				},
-			},
-		}, nil
+		return &proto.MFARegisterChallenge{Request: &proto.MFARegisterChallenge_TOTP{TOTP: challenge}}, nil
 
 	case proto.DeviceType_DEVICE_TYPE_WEBAUTHN:
 		cap, err := a.GetAuthPreference(ctx)
@@ -3098,39 +3034,17 @@ func (a *Server) GetMFADevices(ctx context.Context, req *proto.GetMFADevicesRequ
 
 // DeleteMFADeviceSync implements AuthService.DeleteMFADeviceSync.
 func (a *Server) DeleteMFADeviceSync(ctx context.Context, req *proto.DeleteMFADeviceSyncRequest) error {
-	var user string
-	switch {
-	case req.TokenID != "":
-		token, err := a.GetUserToken(ctx, req.TokenID)
-		if err != nil {
-			log.Error(trace.DebugReport(err))
-			return trace.AccessDenied("invalid token")
-		}
-		user = token.GetUser()
-
-		if err := a.verifyUserToken(token, UserTokenTypeRecoveryApproved, UserTokenTypePrivilege); err != nil {
-			return trace.Wrap(err)
-		}
-
-	case req.ExistingMFAResponse != nil:
-		var err error
-		user, err = authz.GetClientUsername(ctx)
-		if err != nil {
-			return trace.Wrap(err)
-		}
-
-		if _, _, err := a.validateMFAAuthResponse(
-			ctx, req.ExistingMFAResponse, user, false, /* passwordless */
-		); err != nil {
-			return trace.Wrap(err)
-		}
-
-	default:
-		return trace.BadParameter(
-			"deleting an MFA device requires either a privilege token or a solved authentication challenge")
+	token, err := a.GetUserToken(ctx, req.GetTokenID())
+	if err != nil {
+		log.Error(trace.DebugReport(err))
+		return trace.AccessDenied("invalid token")
 	}
 
-	_, err := a.deleteMFADeviceSafely(ctx, user, req.DeviceName)
+	if err := a.verifyUserToken(token, UserTokenTypeRecoveryApproved, UserTokenTypePrivilege); err != nil {
+		return trace.Wrap(err)
+	}
+
+	_, err = a.deleteMFADeviceSafely(ctx, token.GetUser(), req.GetDeviceName())
 	return trace.Wrap(err)
 }
 
@@ -3222,62 +3136,43 @@ func (a *Server) deleteMFADeviceSafely(ctx context.Context, user, deviceName str
 
 // AddMFADeviceSync implements AuthService.AddMFADeviceSync.
 func (a *Server) AddMFADeviceSync(ctx context.Context, req *proto.AddMFADeviceSyncRequest) (*proto.AddMFADeviceSyncResponse, error) {
-	// Use either the explicitly provided token or the TOTP token created by
-	// CreateRegisterChallenge.
-	token := req.GetTokenID()
-	if token == "" {
-		token = req.GetNewMFAResponse().GetTOTP().GetID()
+	privilegeToken, err := a.GetUserToken(ctx, req.GetTokenID())
+	if err != nil {
+		log.Error(trace.DebugReport(err))
+		return nil, trace.AccessDenied("invalid token")
 	}
 
-	var username string
-	switch {
-	case token != "":
-		privilegeToken, err := a.GetUserToken(ctx, token)
-		if err != nil {
-			log.Error(trace.DebugReport(err))
-			return nil, trace.AccessDenied("invalid token")
-		}
-
-		if err := a.verifyUserToken(
-			privilegeToken,
-			UserTokenTypePrivilege,
-			UserTokenTypePrivilegeException,
-			userTokenTypePrivilegeOTP,
-		); err != nil {
-			return nil, trace.Wrap(err)
-		}
-		username = privilegeToken.GetUser()
-
-	default: // ContextUser
-		var err error
-		username, err = authz.GetClientUsername(ctx)
-		if err != nil {
-			return nil, trace.Wrap(err)
-		}
+	if err := a.verifyUserToken(privilegeToken, UserTokenTypePrivilege, UserTokenTypePrivilegeException); err != nil {
+		return nil, trace.Wrap(err)
 	}
 
 	dev, err := a.verifyMFARespAndAddDevice(ctx, &newMFADeviceFields{
-		username:      username,
+		username:      privilegeToken.GetUser(),
 		newDeviceName: req.GetNewDeviceName(),
-		tokenID:       token,
+		tokenID:       privilegeToken.GetName(),
 		deviceResp:    req.GetNewMFAResponse(),
 		deviceUsage:   req.DeviceUsage,
 	})
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
+
 	return &proto.AddMFADeviceSyncResponse{Device: dev}, nil
 }
 
 type newMFADeviceFields struct {
 	username      string
 	newDeviceName string
-	// tokenID is the ID of a reset/invite/recovery/privilege token.
-	// It is generally used to recover the TOTP secret stored in the token.
+	// tokenID is the ID of a reset/invite/recovery token.
+	// It is used as following:
+	//  - TOTP:
+	//    - look up TOTP secret stored by token ID
+	//  - MFA:
+	//    - look up challenge stored by token ID
+	// This field can be empty to use storage overrides.
 	tokenID string
 	// totpSecret is a secret shared by client and server to generate totp codes.
 	// Field can be empty to get secret by "tokenID".
-	// DELETE IN 16. Only used by the streaming AddMFADevice RPC. (codingllama)
 	totpSecret string
 
 	// webIdentityOverride is an optional RegistrationIdentity override to be used
@@ -3458,7 +3353,7 @@ func (a *Server) ExtendWebSession(ctx context.Context, req WebSessionReq, identi
 		// We don't call from the cache layer because we want to
 		// retrieve the recently updated user. Otherwise, the cache
 		// returns stale data.
-		user, err := a.Identity.GetUser(ctx, req.User, false)
+		user, err := a.Identity.GetUser(req.User, false)
 		if err != nil {
 			return nil, trace.Wrap(err)
 		}
@@ -4325,9 +4220,6 @@ func (a *Server) CreateAccessRequestV2(ctx context.Context, req types.AccessRequ
 	}
 
 	if req.GetDryRun() {
-		_, promotions := a.generateAccessRequestPromotions(ctx, req)
-		// update the request with additional reviewers if possible.
-		updateAccessRequestWithAdditionalReviewers(ctx, req, a.AccessListClient(), promotions)
 		// Made it this far with no errors, return before creating the request
 		// if this is a dry run.
 		return req, nil
@@ -4361,10 +4253,14 @@ func (a *Server) CreateAccessRequestV2(ctx context.Context, req types.AccessRequ
 	if err != nil {
 		log.WithError(err).Warn("Failed to emit access request create event.")
 	}
-
 	// calculate the promotions
-	reqCopy, promotions := a.generateAccessRequestPromotions(ctx, req)
-	if promotions != nil {
+	reqCopy := req.Copy()
+	promotions, err := modules.GetModules().GenerateAccessRequestPromotions(ctx, a.Services, reqCopy)
+	if err != nil {
+		// Do not fail the request if the promotions failed to generate.
+		// The request promotion will be blocked, but the request can still be approved.
+		log.WithError(err).Warn("Failed to generate access list promotions.")
+	} else if promotions != nil {
 		// Create the promotion entry even if the allowed promotion is empty. Otherwise, we won't
 		// be able to distinguish between an allowed empty set and generation failure.
 		if err := a.Services.CreateAccessRequestAllowedPromotions(ctx, reqCopy, promotions); err != nil {
@@ -4376,48 +4272,6 @@ func (a *Server) CreateAccessRequestV2(ctx context.Context, req types.AccessRequ
 		strconv.Itoa(len(req.GetRoles())),
 		strconv.Itoa(len(req.GetRequestedResourceIDs()))).Inc()
 	return req, nil
-}
-
-// generateAccessRequestPromotions will return potential access list promotions for an access request. On error, this function will log
-// the error and return whatever it has. The caller is expected to deal with the possibility of a nil promotions object.
-func (a *Server) generateAccessRequestPromotions(ctx context.Context, req types.AccessRequest) (types.AccessRequest, *types.AccessRequestAllowedPromotions) {
-	reqCopy := req.Copy()
-	promotions, err := modules.GetModules().GenerateAccessRequestPromotions(ctx, a.Services, reqCopy)
-	if err != nil {
-		// Do not fail the request if the promotions failed to generate.
-		// The request promotion will be blocked, but the request can still be approved.
-		log.WithError(err).Warn("Failed to generate access list promotions.")
-	}
-	return reqCopy, promotions
-}
-
-// updateAccessRequestWithAdditionalReviewers will update the given access request with additional reviewers given the promotions
-// created for the access request.
-func updateAccessRequestWithAdditionalReviewers(ctx context.Context, req types.AccessRequest, accessLists services.AccessListsGetter, promotions *types.AccessRequestAllowedPromotions) {
-	if promotions == nil {
-		return
-	}
-
-	// For promotions, add in access list owners as additional suggested reviewers
-	additionalReviewers := map[string]struct{}{}
-
-	// Iterate through the promotions, adding the owners of the corresponding access lists as reviewers.
-	for _, promotion := range promotions.Promotions {
-		accessList, err := accessLists.GetAccessList(ctx, promotion.AccessListName)
-		if err != nil {
-			log.WithError(err).Warn("Failed to get access list, skipping additional reviewers")
-			break
-		}
-
-		for _, owner := range accessList.GetOwners() {
-			additionalReviewers[owner.Name] = struct{}{}
-		}
-	}
-
-	// Only modify the original request if additional reviewers were found.
-	if len(additionalReviewers) > 0 {
-		req.SetSuggestedReviewers(append(req.GetSuggestedReviewers(), maps.Keys(additionalReviewers)...))
-	}
 }
 
 func (a *Server) DeleteAccessRequest(ctx context.Context, name string) error {
@@ -4565,43 +4419,6 @@ func (a *Server) GetAccessCapabilities(ctx context.Context, req types.AccessCapa
 		return nil, trace.Wrap(err)
 	}
 	return caps, nil
-}
-
-func (a *Server) getCache() (c *cache.Cache, ok bool) {
-	c, ok = a.Cache.(*cache.Cache)
-	return
-}
-
-func (a *Server) NewStream(ctx context.Context, watch types.Watch) (stream.Stream[types.Event], error) {
-	if cache, ok := a.getCache(); ok {
-		// cache exposes a native stream implementation
-		return cache.NewStream(ctx, watch)
-	}
-
-	// fallback to wrapping a watcher in a stream.Stream adapter
-	watcher, err := a.Cache.NewWatcher(ctx, watch)
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-
-	closer := func() {
-		watcher.Close()
-	}
-
-	return stream.Func(func() (types.Event, error) {
-		select {
-		case event := <-watcher.Events():
-			return event, nil
-		case <-watcher.Done():
-			err := watcher.Error()
-			if err == nil {
-				// stream.Func needs an error to signal end of stream. io.EOF is
-				// the expected "happy" end of stream singnal.
-				err = io.EOF
-			}
-			return types.Event{}, trace.Wrap(err)
-		}
-	}, closer), nil
 }
 
 // NewKeepAliver returns a new instance of keep aliver
@@ -5347,25 +5164,7 @@ func (a *Server) ExportUpgradeWindows(ctx context.Context, req proto.ExportUpgra
 	return rsp, nil
 }
 
-// MFARequiredToBool translates a [proto.MFARequired] value to a simple
-// "required bool".
-func MFARequiredToBool(m proto.MFARequired) (required bool) {
-	switch m {
-	case proto.MFARequired_MFA_REQUIRED_NO:
-		return false
-	default: // _UNSPECIFIED or _YES are both treated as required.
-		return true
-	}
-}
-
-func (a *Server) isMFARequired(ctx context.Context, checker services.AccessChecker, req *proto.IsMFARequiredRequest) (resp *proto.IsMFARequiredResponse, err error) {
-	// Assign Required as a function of MFARequired.
-	defer func() {
-		if resp != nil {
-			resp.Required = MFARequiredToBool(resp.MFARequired)
-		}
-	}()
-
+func (a *Server) isMFARequired(ctx context.Context, checker services.AccessChecker, req *proto.IsMFARequiredRequest) (*proto.IsMFARequiredResponse, error) {
 	authPref, err := a.GetAuthPreference(ctx)
 	if err != nil {
 		return nil, trace.Wrap(err)
@@ -5373,13 +5172,9 @@ func (a *Server) isMFARequired(ctx context.Context, checker services.AccessCheck
 
 	switch state := checker.GetAccessState(authPref); state.MFARequired {
 	case services.MFARequiredAlways:
-		return &proto.IsMFARequiredResponse{
-			MFARequired: proto.MFARequired_MFA_REQUIRED_YES,
-		}, nil
+		return &proto.IsMFARequiredResponse{Required: true}, nil
 	case services.MFARequiredNever:
-		return &proto.IsMFARequiredResponse{
-			MFARequired: proto.MFARequired_MFA_REQUIRED_NO,
-		}, nil
+		return &proto.IsMFARequiredResponse{Required: false}, nil
 	}
 
 	var noMFAAccessErr, notFoundErr error
@@ -5412,9 +5207,7 @@ func (a *Server) isMFARequired(ctx context.Context, checker services.AccessCheck
 			// private network IP), and MFA check was actually required, the
 			// Node itself will check the cert extensions and reject the
 			// connection.
-			return &proto.IsMFARequiredResponse{
-				MFARequired: proto.MFARequired_MFA_REQUIRED_NO,
-			}, nil
+			return &proto.IsMFARequiredResponse{Required: false}, nil
 		}
 
 		// Check RBAC against all matching nodes and return the first error.
@@ -5522,9 +5315,7 @@ func (a *Server) isMFARequired(ctx context.Context, checker services.AccessCheck
 	// No error means that MFA is not required for this resource by
 	// AccessChecker.
 	if noMFAAccessErr == nil {
-		return &proto.IsMFARequiredResponse{
-			MFARequired: proto.MFARequired_MFA_REQUIRED_NO,
-		}, nil
+		return &proto.IsMFARequiredResponse{Required: false}, nil
 	}
 	// Errors other than ErrSessionMFARequired mean something else is wrong,
 	// most likely access denied.
@@ -5536,16 +5327,12 @@ func (a *Server) isMFARequired(ctx context.Context, checker services.AccessCheck
 		// Mask the access denied errors by returning false to prevent resource
 		// name oracles. Auth will be denied (and generate an audit log entry)
 		// when the client attempts to connect.
-		return &proto.IsMFARequiredResponse{
-			MFARequired: proto.MFARequired_MFA_REQUIRED_NO,
-		}, nil
+		return &proto.IsMFARequiredResponse{Required: false}, nil
 	}
 	// If we reach here, the error from AccessChecker was
 	// ErrSessionMFARequired.
 
-	return &proto.IsMFARequiredResponse{
-		MFARequired: proto.MFARequired_MFA_REQUIRED_YES,
-	}, nil
+	return &proto.IsMFARequiredResponse{Required: true}, nil
 }
 
 // mfaAuthChallenge constructs an MFAAuthenticateChallenge for all MFA devices
@@ -5693,7 +5480,7 @@ func (a *Server) validateMFAAuthResponseForRegister(
 		return false, nil
 	}
 
-	if err := a.WithUserLock(ctx, username, func() error {
+	if err := a.WithUserLock(username, func() error {
 		_, _, err := a.validateMFAAuthResponse(
 			ctx, resp, username, false /* passwordless */)
 		return err

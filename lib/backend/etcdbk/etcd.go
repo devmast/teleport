@@ -20,13 +20,13 @@ package etcdbk
 import (
 	"bytes"
 	"context"
+	"crypto/subtle"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
 	"errors"
 	"os"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -145,7 +145,7 @@ type EtcdBackend struct {
 	nodes []string
 	*log.Entry
 	cfg         *Config
-	clients     *utils.RoundRobin[*clientv3.Client]
+	clients     roundRobin[*clientv3.Client]
 	cancelC     chan bool
 	stopC       chan bool
 	clock       clockwork.Clock
@@ -273,6 +273,7 @@ func New(ctx context.Context, params backend.Params, opts ...Option) (*EtcdBacke
 	b := &EtcdBackend{
 		Entry:       log.WithFields(log.Fields{trace.Component: GetName()}),
 		cfg:         cfg,
+		clients:     newRoundRobin[*clientv3.Client](nil), // initialized below in reconnect()
 		nodes:       cfg.Nodes,
 		cancelC:     make(chan bool, 1),
 		stopC:       make(chan bool, 1),
@@ -408,10 +409,8 @@ func (b *EtcdBackend) Close() error {
 	b.cancel()
 	b.buf.Close()
 	var errs []error
-	if b.clients != nil {
-		b.clients.ForEach(func(clt *clientv3.Client) {
-			errs = append(errs, clt.Close())
-		})
+	for _, clt := range b.clients.items {
+		errs = append(errs, clt.Close())
 	}
 	return trace.NewAggregate(errs...)
 }
@@ -423,15 +422,12 @@ func (b *EtcdBackend) CloseWatchers() {
 }
 
 func (b *EtcdBackend) reconnect(ctx context.Context) error {
-	if b.clients != nil {
-		b.clients.ForEach(func(clt *clientv3.Client) {
-			if err := clt.Close(); err != nil {
-				b.Entry.WithError(err).Warning("Failed closing existing etcd client on reconnect.")
-			}
-		})
-
-		b.clients = nil
+	for _, clt := range b.clients.items {
+		if err := clt.Close(); err != nil {
+			b.Entry.WithError(err).Warning("Failed closing existing etcd client on reconnect.")
+		}
 	}
+	b.clients.items = nil
 
 	tlsConfig := utils.TLSConfig(nil)
 
@@ -470,10 +466,8 @@ func (b *EtcdBackend) reconnect(ctx context.Context) error {
 		tlsConfig.ClientCAs = certPool
 	}
 
-	clients := make([]*clientv3.Client, 0, b.cfg.ClientPoolSize)
 	for i := 0; i < b.cfg.ClientPoolSize; i++ {
 		clt, err := clientv3.New(clientv3.Config{
-			Context:            ctx,
 			Endpoints:          b.nodes,
 			TLS:                tlsConfig,
 			DialTimeout:        b.cfg.DialTimeout,
@@ -482,16 +476,13 @@ func (b *EtcdBackend) reconnect(ctx context.Context) error {
 			MaxCallSendMsgSize: b.cfg.MaxClientMsgSizeBytes,
 		})
 		if err != nil {
-			// close any preceding clients
-			for _, c := range clients {
-				c.Close()
+			if errors.Is(err, context.DeadlineExceeded) {
+				return trace.WrapWithMessage(err, "timed out dialing etcd endpoints: %s", b.nodes)
 			}
 			return trace.Wrap(err)
 		}
-		clients = append(clients, clt)
+		b.clients.items = append(b.clients.items, clt)
 	}
-
-	b.clients = utils.NewRoundRobin(clients)
 	return nil
 }
 
@@ -668,27 +659,14 @@ func (b *EtcdBackend) GetRange(ctx context.Context, startKey, endKey []byte, lim
 			return nil, trace.Wrap(err)
 		}
 		items = append(items, backend.Item{
-			Key:      b.trimPrefix(kv.Key),
-			Value:    value,
-			ID:       kv.ModRevision,
-			Revision: toBackendRevision(kv.ModRevision),
+			Key:     b.trimPrefix(kv.Key),
+			Value:   value,
+			ID:      kv.ModRevision,
+			LeaseID: kv.Lease,
 		})
 	}
 	sort.Sort(backend.Items(items))
 	return &backend.GetResult{Items: items}, nil
-}
-
-func toBackendRevision(rev int64) string {
-	return strconv.FormatInt(rev, 10)
-}
-
-func fromBackendRevision(rev string) (int64, error) {
-	n, err := strconv.ParseInt(rev, 10, 64)
-	if err != nil {
-		return 0, trace.BadParameter("invalid revision: %s", err)
-	}
-
-	return n, err
 }
 
 // Create creates item if it does not exist
@@ -701,10 +679,9 @@ func (b *EtcdBackend) Create(ctx context.Context, item backend.Item) (*backend.L
 		}
 	}
 	start := b.clock.Now()
-	key := b.prependPrefix(item.Key)
 	re, err := b.clients.Next().Txn(ctx).
-		If(clientv3.Compare(clientv3.CreateRevision(key), "=", 0)).
-		Then(clientv3.OpPut(key, base64.StdEncoding.EncodeToString(item.Value), opts...)).
+		If(clientv3.Compare(clientv3.CreateRevision(b.prependPrefix(item.Key)), "=", 0)).
+		Then(clientv3.OpPut(b.prependPrefix(item.Key), base64.StdEncoding.EncodeToString(item.Value), opts...)).
 		Commit()
 	txLatencies.Observe(time.Since(start).Seconds())
 	txRequests.Inc()
@@ -714,8 +691,6 @@ func (b *EtcdBackend) Create(ctx context.Context, item backend.Item) (*backend.L
 	if !re.Succeeded {
 		return nil, trace.AlreadyExists("%q already exists", string(item.Key))
 	}
-
-	lease.Revision = toBackendRevision(re.Header.Revision)
 	return &lease, nil
 }
 
@@ -729,10 +704,9 @@ func (b *EtcdBackend) Update(ctx context.Context, item backend.Item) (*backend.L
 		}
 	}
 	start := b.clock.Now()
-	key := b.prependPrefix(item.Key)
 	re, err := b.clients.Next().Txn(ctx).
-		If(clientv3.Compare(clientv3.CreateRevision(key), "!=", 0)).
-		Then(clientv3.OpPut(key, base64.StdEncoding.EncodeToString(item.Value), opts...)).
+		If(clientv3.Compare(clientv3.CreateRevision(b.prependPrefix(item.Key)), "!=", 0)).
+		Then(clientv3.OpPut(b.prependPrefix(item.Key), base64.StdEncoding.EncodeToString(item.Value), opts...)).
 		Commit()
 	txLatencies.Observe(time.Since(start).Seconds())
 	txRequests.Inc()
@@ -742,42 +716,6 @@ func (b *EtcdBackend) Update(ctx context.Context, item backend.Item) (*backend.L
 	if !re.Succeeded {
 		return nil, trace.NotFound("%q is not found", string(item.Key))
 	}
-
-	lease.Revision = toBackendRevision(re.Header.Revision)
-	return &lease, nil
-}
-
-// ConditionalUpdate updates value in the backend if it hasn't been modified.
-func (b *EtcdBackend) ConditionalUpdate(ctx context.Context, item backend.Item) (*backend.Lease, error) {
-	rev, err := fromBackendRevision(item.Revision)
-	if err != nil {
-		return nil, trace.Wrap(backend.ErrIncorrectRevision)
-	}
-
-	var opts []clientv3.OpOption
-	var lease backend.Lease
-	if !item.Expires.IsZero() {
-		if err := b.setupLease(ctx, item, &lease, &opts); err != nil {
-			return nil, trace.Wrap(err)
-		}
-	}
-	start := b.clock.Now()
-	key := b.prependPrefix(item.Key)
-	re, err := b.clients.Next().Txn(ctx).
-		If(clientv3.Compare(clientv3.CreateRevision(key), "!=", 0),
-			clientv3.Compare(clientv3.ModRevision(key), "=", rev)).
-		Then(clientv3.OpPut(key, base64.StdEncoding.EncodeToString(item.Value), opts...)).
-		Commit()
-	txLatencies.Observe(time.Since(start).Seconds())
-	txRequests.Inc()
-	if err != nil {
-		return nil, trace.Wrap(convertErr(err))
-	}
-	if !re.Succeeded {
-		return nil, trace.Wrap(backend.ErrIncorrectRevision)
-	}
-
-	lease.Revision = toBackendRevision(re.Header.Revision)
 	return &lease, nil
 }
 
@@ -790,7 +728,7 @@ func (b *EtcdBackend) CompareAndSwap(ctx context.Context, expected backend.Item,
 	if len(replaceWith.Key) == 0 {
 		return nil, trace.BadParameter("missing parameter Key")
 	}
-	if !bytes.Equal(expected.Key, replaceWith.Key) {
+	if subtle.ConstantTimeCompare(expected.Key, replaceWith.Key) != 1 {
 		return nil, trace.BadParameter("expected and replaceWith keys should match")
 	}
 	var opts []clientv3.OpOption
@@ -803,10 +741,9 @@ func (b *EtcdBackend) CompareAndSwap(ctx context.Context, expected backend.Item,
 	encodedPrev := base64.StdEncoding.EncodeToString(expected.Value)
 
 	start := b.clock.Now()
-	key := b.prependPrefix(expected.Key)
 	re, err := b.clients.Next().Txn(ctx).
-		If(clientv3.Compare(clientv3.Value(key), "=", encodedPrev)).
-		Then(clientv3.OpPut(key, base64.StdEncoding.EncodeToString(replaceWith.Value), opts...)).
+		If(clientv3.Compare(clientv3.Value(b.prependPrefix(expected.Key)), "=", encodedPrev)).
+		Then(clientv3.OpPut(b.prependPrefix(expected.Key), base64.StdEncoding.EncodeToString(replaceWith.Value), opts...)).
 		Commit()
 	txLatencies.Observe(time.Since(start).Seconds())
 	txRequests.Inc()
@@ -820,12 +757,11 @@ func (b *EtcdBackend) CompareAndSwap(ctx context.Context, expected backend.Item,
 	if !re.Succeeded {
 		return nil, trace.CompareFailed("key %q did not match expected value", string(expected.Key))
 	}
-
-	lease.Revision = toBackendRevision(re.Header.Revision)
 	return &lease, nil
 }
 
-// Put puts value into backend (creates if it does not exists, updates it otherwise)
+// Put puts value into backend (creates if it does not
+// exists, updates it otherwise)
 func (b *EtcdBackend) Put(ctx context.Context, item backend.Item) (*backend.Lease, error) {
 	var opts []clientv3.OpOption
 	var lease backend.Lease
@@ -835,7 +771,7 @@ func (b *EtcdBackend) Put(ctx context.Context, item backend.Item) (*backend.Leas
 		}
 	}
 	start := b.clock.Now()
-	re, err := b.clients.Next().Put(
+	_, err := b.clients.Next().Put(
 		ctx,
 		b.prependPrefix(item.Key),
 		base64.StdEncoding.EncodeToString(item.Value),
@@ -846,12 +782,15 @@ func (b *EtcdBackend) Put(ctx context.Context, item backend.Item) (*backend.Leas
 		return nil, convertErr(err)
 	}
 
-	lease.Revision = toBackendRevision(re.Header.Revision)
 	return &lease, nil
 }
 
 // KeepAlive updates TTL on the lease ID
 func (b *EtcdBackend) KeepAlive(ctx context.Context, lease backend.Lease, expires time.Time) error {
+	if lease.ID == 0 {
+		return trace.BadParameter("lease is not specified")
+	}
+
 	// instead of keep-alive on the old lease, set up a new lease
 	// because we would like the event to be generated
 	// which does not happen in case of lease keep-alive
@@ -880,16 +819,11 @@ func (b *EtcdBackend) Get(ctx context.Context, key []byte) (*backend.Item, error
 		return nil, trace.NotFound("item %q is not found", string(key))
 	}
 	kv := re.Kvs[0]
-	value, err := unmarshal(kv.Value)
+	bytes, err := unmarshal(kv.Value)
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
-	return &backend.Item{
-		Key:      key,
-		Value:    value,
-		ID:       kv.ModRevision,
-		Revision: toBackendRevision(kv.ModRevision),
-	}, nil
+	return &backend.Item{Key: key, Value: bytes, ID: kv.ModRevision, LeaseID: kv.Lease}, nil
 }
 
 // Delete deletes item by key
@@ -903,31 +837,6 @@ func (b *EtcdBackend) Delete(ctx context.Context, key []byte) error {
 	}
 	if re.Deleted == 0 {
 		return trace.NotFound("%q is not found", key)
-	}
-
-	return nil
-}
-
-// ConditionalDelete deletes the item if it hasn't been modified.
-func (b *EtcdBackend) ConditionalDelete(ctx context.Context, prefix []byte, rev string) error {
-	r, err := fromBackendRevision(rev)
-	if err != nil {
-		return trace.Wrap(backend.ErrIncorrectRevision)
-	}
-
-	start := b.clock.Now()
-	key := b.prependPrefix(prefix)
-	re, err := b.clients.Next().KV.Txn(ctx).
-		If(clientv3.Compare(clientv3.CreateRevision(key), "!=", 0),
-			clientv3.Compare(clientv3.ModRevision(key), "=", r)).
-		Then(clientv3.OpDelete(key)).Commit()
-	writeLatencies.Observe(time.Since(start).Seconds())
-	writeRequests.Inc()
-	if err != nil {
-		return trace.Wrap(convertErr(err))
-	}
-	if !re.Succeeded {
-		return trace.Wrap(backend.ErrIncorrectRevision)
 	}
 
 	return nil
@@ -978,7 +887,6 @@ func (b *EtcdBackend) setupLease(ctx context.Context, item backend.Item, lease *
 	*opts = []clientv3.OpOption{clientv3.WithLease(leaseID)}
 	lease.ID = int64(leaseID)
 	lease.Key = item.Key
-	lease.Revision = item.Revision
 	return nil
 }
 
@@ -1005,9 +913,8 @@ func (b *EtcdBackend) fromEvent(ctx context.Context, e clientv3.Event) (*backend
 	event := &backend.Event{
 		Type: fromType(e.Type),
 		Item: backend.Item{
-			Key:      b.trimPrefix(e.Kv.Key),
-			ID:       e.Kv.ModRevision,
-			Revision: toBackendRevision(e.Kv.ModRevision),
+			Key: b.trimPrefix(e.Kv.Key),
+			ID:  e.Kv.ModRevision,
 		},
 	}
 	if event.Type == types.OpDelete {

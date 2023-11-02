@@ -19,7 +19,7 @@ package img
 import (
 	"fmt"
 
-	"github.com/distribution/reference"
+	"github.com/docker/distribution/reference"
 )
 
 // ImageNotValidatedError indicates that the validator did not validate the image.

@@ -20,12 +20,9 @@ import { Box, LabelInput } from 'design';
 
 import { useRule } from 'shared/components/Validation';
 
-import Select, { Props as SelectProps } from '../Select';
-
-import { LabelTip, defaultRule } from './shared';
+import Select, { Props as SelectProps } from './../Select';
 
 export default function FieldSelect({
-  components,
   label,
   labelTip,
   value,
@@ -38,13 +35,11 @@ export default function FieldSelect({
   isMulti,
   menuPosition,
   rule = defaultRule,
-  stylesConfig,
   isSearchable = false,
   isSimpleValue = false,
   autoFocus = false,
   isDisabled = false,
   elevated = false,
-  inputId = 'select',
   ...styles
 }: Props) {
   const { valid, message } = useRule(rule(value));
@@ -53,15 +48,13 @@ export default function FieldSelect({
   return (
     <Box mb="4" {...styles}>
       {label && (
-        <LabelInput htmlFor={inputId} hasError={hasError}>
+        <LabelInput htmlFor={'select'} hasError={hasError}>
           {labelText}
           {labelTip && <LabelTip text={labelTip} />}
         </LabelInput>
       )}
       <Select
-        components={components}
-        stylesConfig={stylesConfig}
-        inputId={inputId}
+        inputId="select"
         name={name}
         menuPosition={menuPosition}
         hasError={hasError}
@@ -81,6 +74,14 @@ export default function FieldSelect({
     </Box>
   );
 }
+
+const defaultRule = () => () => ({ valid: true });
+
+const LabelTip = ({ text }) => (
+  <span
+    css={{ fontWeight: 'normal', textTransform: 'none' }}
+  >{` - ${text}`}</span>
+);
 
 type Props = SelectProps & {
   autoFocus?: boolean;

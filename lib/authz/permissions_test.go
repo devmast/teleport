@@ -562,7 +562,7 @@ func TestCheckIPPinning(t *testing.T) {
 			desc:     "IP pinning enabled, missing client IP",
 			pinnedIP: "127.0.0.1",
 			pinIP:    true,
-			wantErr:  "client source address was not found in the context",
+			wantErr:  "expected type net.Addr, got <nil>",
 		},
 		{
 			desc:       "IP pinning enabled, port=0 (marked by proxyProtocolMode unspecified)",
@@ -582,7 +582,7 @@ func TestCheckIPPinning(t *testing.T) {
 	for _, tt := range testCases {
 		ctx := context.Background()
 		if tt.clientAddr != "" {
-			ctx = ContextWithClientSrcAddr(ctx, utils.MustParseAddr(tt.clientAddr))
+			ctx = ContextWithClientAddr(ctx, utils.MustParseAddr(tt.clientAddr))
 		}
 		identity := tlsca.Identity{PinnedIP: tt.pinnedIP}
 
@@ -613,7 +613,7 @@ func TestAuthorizeWithVerbs(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	_, err = accessService.CreateRole(context.Background(), role)
+	err = accessService.CreateRole(context.Background(), role)
 	require.NoError(t, err)
 
 	tests := []struct {
@@ -725,94 +725,6 @@ func TestRoleSetForBuiltinRoles(t *testing.T) {
 	}
 }
 
-func TestIsUserFunctions(t *testing.T) {
-	localIdentity := Context{
-		Identity:         LocalUser{},
-		UnmappedIdentity: LocalUser{},
-	}
-	remoteIdentity := Context{
-		Identity:         RemoteUser{},
-		UnmappedIdentity: RemoteUser{},
-	}
-	systemIdentity := Context{
-		Identity:         BuiltinRole{Role: types.RoleProxy},
-		UnmappedIdentity: BuiltinRole{Role: types.RoleProxy},
-	}
-
-	tests := []struct {
-		funcName, scenario string
-		isUserFunc         func(Context) bool
-		authCtx            Context
-		want               bool
-	}{
-		{
-			funcName:   "IsLocalUser",
-			scenario:   "local user",
-			isUserFunc: IsLocalUser,
-			authCtx:    localIdentity,
-			want:       true,
-		},
-		{
-			funcName:   "IsLocalUser",
-			scenario:   "remote user",
-			isUserFunc: IsLocalUser,
-			authCtx:    remoteIdentity,
-		},
-		{
-			funcName:   "IsLocalUser",
-			scenario:   "system user",
-			isUserFunc: IsLocalUser,
-			authCtx:    systemIdentity,
-		},
-		{
-			funcName:   "IsRemoteUser",
-			scenario:   "local user",
-			isUserFunc: IsRemoteUser,
-			authCtx:    localIdentity,
-		},
-		{
-			funcName:   "IsRemoteUser",
-			scenario:   "remote user",
-			isUserFunc: IsRemoteUser,
-			authCtx:    remoteIdentity,
-			want:       true,
-		},
-		{
-			funcName:   "IsRemoteUser",
-			scenario:   "system user",
-			isUserFunc: IsRemoteUser,
-			authCtx:    systemIdentity,
-		},
-
-		{
-			funcName:   "IsLocalOrRemoteUser",
-			scenario:   "local user",
-			isUserFunc: IsLocalOrRemoteUser,
-			authCtx:    localIdentity,
-			want:       true,
-		},
-		{
-			funcName:   "IsLocalOrRemoteUser",
-			scenario:   "remote user",
-			isUserFunc: IsLocalOrRemoteUser,
-			authCtx:    remoteIdentity,
-			want:       true,
-		},
-		{
-			funcName:   "IsLocalOrRemoteUser",
-			scenario:   "system user",
-			isUserFunc: IsLocalOrRemoteUser,
-			authCtx:    systemIdentity,
-		},
-	}
-	for _, test := range tests {
-		t.Run(test.funcName+"/"+test.scenario, func(t *testing.T) {
-			got := test.isUserFunc(test.authCtx)
-			assert.Equal(t, test.want, got, "%s mismatch", test.funcName)
-		})
-	}
-}
-
 // fakeCtxUser is used for auth.Context tests.
 type fakeCtxUser struct {
 	types.User
@@ -900,13 +812,13 @@ func createUserAndRole(client *testClient, username string, allowedLogins []stri
 		role.SetRules(types.Allow, allowRules)
 	}
 
-	role, err = client.UpsertRole(ctx, role)
+	err = client.UpsertRole(ctx, role)
 	if err != nil {
 		return nil, nil, trace.Wrap(err)
 	}
 
 	user.AddRole(role.GetName())
-	user, err = client.UpsertUser(ctx, user)
+	err = client.UpsertUser(user)
 	if err != nil {
 		return nil, nil, trace.Wrap(err)
 	}

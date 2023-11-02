@@ -27,10 +27,10 @@ import UserList from './UserList';
 import UserAddEdit from './UserAddEdit';
 import UserDelete from './UserDelete';
 import UserReset from './UserReset';
-import useUsers, { State, UsersContainerProps } from './useUsers';
+import useUsers, { State } from './useUsers';
 
-export default function Container(props: UsersContainerProps) {
-  const state = useUsers(props);
+export default function Container() {
+  const state = useUsers();
   return <Users {...state} />;
 }
 
@@ -49,32 +49,16 @@ export function Users(props: State) {
     onUpdate,
     onDelete,
     onReset,
-    onStartInviteCollaborators,
-    onInviteCollaboratorsClose,
-    inviteCollaboratorsOpen,
-    InviteCollaborators,
   } = props;
+
   return (
     <FeatureBox>
       <FeatureHeader>
         <FeatureHeaderTitle>Users</FeatureHeaderTitle>
         {attempt.isSuccess && (
-          <>
-            {!InviteCollaborators && (
-              <ButtonPrimary ml="auto" width="240px" onClick={onStartCreate}>
-                Create New User
-              </ButtonPrimary>
-            )}
-            {InviteCollaborators && (
-              <ButtonPrimary
-                ml="auto"
-                width="240px"
-                onClick={onStartInviteCollaborators}
-              >
-                Enroll Users
-              </ButtonPrimary>
-            )}
-          </>
+          <ButtonPrimary ml="auto" width="240px" onClick={onStartCreate}>
+            Create New User
+          </ButtonPrimary>
         )}
       </FeatureHeader>
       {attempt.isProcessing && (
@@ -113,12 +97,6 @@ export function Users(props: State) {
           onClose={onClose}
           onReset={onReset}
           username={operation.user.name}
-        />
-      )}
-      {InviteCollaborators && (
-        <InviteCollaborators
-          open={inviteCollaboratorsOpen}
-          onClose={onInviteCollaboratorsClose}
         />
       )}
     </FeatureBox>

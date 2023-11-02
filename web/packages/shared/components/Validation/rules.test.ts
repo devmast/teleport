@@ -20,7 +20,6 @@ import {
   requiredConfirmedPassword,
   requiredField,
   requiredRoleArn,
-  requiredEmailLike,
 } from './rules';
 
 describe('requiredField', () => {
@@ -32,7 +31,7 @@ describe('requiredField', () => {
     ${'not empty value'} | ${{ valid: true, message: '' }}
     ${''}                | ${{ valid: false, message: errMsg }}
     ${null}              | ${{ valid: false, message: errMsg }}
-  `('input with: $input', ({ input, expected }) => {
+  `('test input with: $input', ({ input, expected }) => {
     expect(validator(input)()).toEqual(expected);
   });
 });
@@ -45,7 +44,7 @@ describe('requiredToken', () => {
     ${'some token'} | ${{ valid: true }}
     ${''}           | ${{ valid: false, message: errMsg }}
     ${null}         | ${{ valid: false, message: errMsg }}
-  `('token value with: $token', ({ token, expected }) => {
+  `('test token value with: $token', ({ token, expected }) => {
     expect(requiredToken(token)()).toEqual(expected);
   });
 });
@@ -58,7 +57,7 @@ describe('requiredPassword', () => {
     ${'valid password'} | ${{ valid: true }}
     ${''}               | ${{ valid: false, message: errMsg }}
     ${null}             | ${{ valid: false, message: errMsg }}
-  `('password value with: $password', ({ password, expected }) => {
+  `('test password value with: $password', ({ password, expected }) => {
     expect(requiredPassword(password)()).toEqual(expected);
   });
 });
@@ -74,7 +73,7 @@ describe('requiredRoleArn', () => {
     ${'arn:aws:123456:role:some-role-name'}      | ${false}
     ${''}                                        | ${false}
     ${null}                                      | ${false}
-  `('valid role arn: $roleArn', ({ roleArn, valid }) => {
+  `('test valid role arn: $roleArn', ({ roleArn, valid }) => {
     const result = requiredRoleArn(roleArn)();
     expect(result.valid).toEqual(valid);
   });
@@ -92,27 +91,11 @@ describe('requiredConfirmedPassword', () => {
     ${'mistmatch'} | ${null}         | ${{ valid: false, message: confirmError }}
     ${null}        | ${null}         | ${{ valid: false, message: confirmError }}
   `(
-    'password: $password, confirmPassword: $confirmPassword',
+    'test password: $password, confirmPassword: $confirmPassword',
     ({ password, confirmPassword, expected }) => {
       expect(requiredConfirmedPassword(password)(confirmPassword)()).toEqual(
         expected
       );
     }
   );
-});
-
-describe('requiredEmailLike', () => {
-  test.each`
-    email                  | expected
-    ${''}                  | ${{ valid: false, kind: 'empty' }}
-    ${'alice'}             | ${{ valid: false, kind: 'invalid' }}
-    ${'alice@'}            | ${{ valid: false, kind: 'invalid' }}
-    ${'@example.com'}      | ${{ valid: false, kind: 'invalid' }}
-    ${'alice@example'}     | ${{ valid: true }}
-    ${'alice@example.com'} | ${{ valid: true }}
-  `('email: $email', ({ email, expected }) => {
-    expect(requiredEmailLike(email)()).toEqual(
-      expect.objectContaining(expected)
-    );
-  });
 });

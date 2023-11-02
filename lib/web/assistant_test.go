@@ -372,8 +372,7 @@ func Test_generateAssistantTitle(t *testing.T) {
 	})
 
 	assistRole := allowAssistAccess(t, s)
-	assistRole, err := s.server.Auth().UpsertRole(s.ctx, assistRole)
-	require.NoError(t, err)
+	require.NoError(t, s.server.Auth().UpsertRole(s.ctx, assistRole))
 
 	pack := s.authPack(t, "foo", assistRole.GetName())
 
@@ -402,8 +401,7 @@ func allowAssistAccess(t *testing.T, s *WebSuite) types.Role {
 		},
 	})
 	require.NoError(t, err)
-	assistRole, err = s.server.Auth().UpsertRole(s.ctx, assistRole)
-	require.NoError(t, err)
+	require.NoError(t, s.server.Auth().UpsertRole(s.ctx, assistRole))
 
 	return assistRole
 }

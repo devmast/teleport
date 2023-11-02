@@ -295,7 +295,7 @@ func (u *UserCommand) Add(ctx context.Context, client auth.ClientI) error {
 	user.SetTraits(traits)
 	user.SetRoles(u.allowedRoles)
 
-	if _, err := client.CreateUser(ctx, user); err != nil {
+	if err := client.CreateUser(ctx, user); err != nil {
 		if trace.IsAlreadyExists(err) {
 			fmt.Printf(`NOTE: To update an existing local user:
 > tctl users update %v --set-roles %v # replace roles
@@ -355,7 +355,7 @@ func printTokenAsText(token types.UserToken, messageFormat string) error {
 
 // Update updates existing user
 func (u *UserCommand) Update(ctx context.Context, client auth.ClientI) error {
-	user, err := client.GetUser(ctx, u.login, false)
+	user, err := client.GetUser(u.login, false)
 	if err != nil {
 		return trace.Wrap(err)
 	}
@@ -465,7 +465,7 @@ func (u *UserCommand) Update(ctx context.Context, client auth.ClientI) error {
 			log.Warnf("Error checking role %q when upserting user %q: %v", roleName, user.GetName(), err)
 		}
 	}
-	if _, err := client.UpsertUser(ctx, user); err != nil {
+	if err := client.UpsertUser(user); err != nil {
 		return trace.Wrap(err)
 	}
 	fmt.Printf("User %v has been updated:\n", user.GetName())
@@ -477,7 +477,7 @@ func (u *UserCommand) Update(ctx context.Context, client auth.ClientI) error {
 
 // List prints all existing user accounts
 func (u *UserCommand) List(ctx context.Context, client auth.ClientI) error {
-	users, err := client.GetUsers(ctx, false)
+	users, err := client.GetUsers(false)
 	if err != nil {
 		return trace.Wrap(err)
 	}

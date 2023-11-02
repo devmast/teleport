@@ -95,9 +95,6 @@ func (a *AsyncEmitter) forward() {
 		case event := <-a.eventsCh:
 			err := a.cfg.Inner.EmitAuditEvent(a.ctx, event)
 			if err != nil {
-				if a.ctx.Err() != nil {
-					return
-				}
 				log.WithError(err).Errorf("Failed to emit audit event.")
 			}
 		}

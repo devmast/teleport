@@ -30,8 +30,8 @@ type fakeKubeGateway struct {
 
 func (m fakeKubeGateway) KubeconfigPath() string { return "test.kubeconfig" }
 
-func TestNewKubeCLICommand(t *testing.T) {
-	cmd, err := NewKubeCLICommand(fakeKubeGateway{})
+func TestKubeCLICommandProvider(t *testing.T) {
+	cmd, err := NewKubeCLICommandProvider().GetCommand(fakeKubeGateway{})
 	require.NoError(t, err)
 	require.Equal(t, []string{"KUBECONFIG=test.kubeconfig"}, cmd.Env)
 }

@@ -859,8 +859,8 @@ func (d *databaseInfo) checkAndSetDefaults(cf *CLIConf, tc *client.TeleportClien
 	// ensure the route protocol matches the db.
 	d.Protocol = db.GetProtocol()
 
-	needDBUser := d.Username == "" && isDatabaseUserRequired(d.Protocol)
-	needDBName := d.Database == "" && isDatabaseNameRequired(d.Protocol)
+	needDBUser := d.Username == "" && role.RequireDatabaseUserMatcher(d.Protocol)
+	needDBName := d.Database == "" && role.RequireDatabaseNameMatcher(d.Protocol)
 	if !needDBUser && !needDBName {
 		return nil
 	}
@@ -868,7 +868,7 @@ func (d *databaseInfo) checkAndSetDefaults(cf *CLIConf, tc *client.TeleportClien
 	// If database has admin user defined, we're most likely using automatic
 	// user provisioning so default to Teleport username unless database
 	// username was provided explicitly.
-	if needDBUser && db.GetAdminUser().Name != "" {
+	if needDBUser && db.GetAdminUser() != "" {
 		log.Debugf("Defaulting to Teleport username %q as database username.", tc.Username)
 		d.Username = tc.Username
 		needDBUser = false
@@ -1145,26 +1145,6 @@ func getDefaultDBUser(db types.Database, checker services.AccessChecker) (string
 		}
 	}
 	return "", trace.BadParameter(errMsg)
-}
-
-// isDatabaseUserRequired returns whether the --db-user flag is required for
-// the db protocol.
-func isDatabaseUserRequired(protocol string) bool {
-	return role.RequireDatabaseUserMatcher(protocol)
-}
-
-// isDatabaseNameRequired returns whether the --db-name flag is required for
-// the db protocol.
-func isDatabaseNameRequired(protocol string) bool {
-	if role.RequireDatabaseNameMatcher(protocol) {
-		return true
-	}
-	switch protocol {
-	case defaults.ProtocolOracle:
-		// Always require database name for the Oracle protocol.
-		return true
-	}
-	return false
 }
 
 // getDefaultDBName enumerates the allowed database names for a given database
@@ -1460,8 +1440,8 @@ func formatDatabaseConnectCommand(clusterFlag string, active tlsca.RouteToDataba
 // formatDatabaseConnectArgs generates the arguments for "tsh db connect" command.
 func formatDatabaseConnectArgs(clusterFlag string, active tlsca.RouteToDatabase) (flags []string) {
 	// figure out if we need --db-user and --db-name
-	needUser := isDatabaseUserRequired(active.Protocol)
-	needDatabase := isDatabaseNameRequired(active.Protocol)
+	needUser := role.RequireDatabaseUserMatcher(active.Protocol)
+	needDatabase := role.RequireDatabaseNameMatcher(active.Protocol)
 
 	if clusterFlag != "" {
 		flags = append(flags, fmt.Sprintf("--cluster=%s", clusterFlag))

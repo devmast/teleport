@@ -360,7 +360,7 @@ If `dict[key]` is empty or it does not exist, it will return an empty set.
 ```
 dict(
   pair("fruits", set("apple", "banana")),
-  pair("vegetables", set("asparagus", "broccoli")),
+  pair("vegetables", set("asparagus", "brocolli")),
 ).get("fruits")
 ```
 returns the set `("apple","bananas")`.

@@ -205,14 +205,14 @@ func initSvc(t *testing.T) (map[string]context.Context, *Service) {
 
 	ctxs := make(map[string]context.Context, len(roles))
 	for username, role := range roles {
-		role, err = roleSvc.CreateRole(ctx, role)
+		err = roleSvc.CreateRole(ctx, role)
 		require.NoError(t, err)
 
 		user, err := types.NewUser(username)
 		user.AddRole(role.GetName())
 		require.NoError(t, err)
 
-		user, err = userSvc.CreateUser(ctx, user)
+		err = userSvc.CreateUser(user)
 		require.NoError(t, err)
 
 		ctx = authz.ContextWithUser(ctx, authz.LocalUser{

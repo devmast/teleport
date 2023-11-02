@@ -490,7 +490,7 @@ func TestPresets(t *testing.T) {
 
 		access := services.NewPresetEditorRole()
 		access.SetLogins(types.Allow, []string{"root"})
-		access, err := as.CreateRole(ctx, access)
+		err := as.CreateRole(ctx, access)
 		require.NoError(t, err)
 
 		err = createPresetRoles(ctx, as)
@@ -526,14 +526,14 @@ func TestPresets(t *testing.T) {
 			outdatedRules = append(outdatedRules, r)
 		}
 		editorRole.SetRules(types.Allow, outdatedRules)
-		editorRole, err := as.CreateRole(ctx, editorRole)
+		err := as.CreateRole(ctx, editorRole)
 		require.NoError(t, err)
 
 		// Set up an old Access Role.
 		// Remove the new DatabaseServiceLabels default
 		accessRole := services.NewPresetAccessRole()
 		accessRole.SetDatabaseServiceLabels(types.Allow, types.Labels{})
-		accessRole, err = as.CreateRole(ctx, accessRole)
+		err = as.CreateRole(ctx, accessRole)
 		require.NoError(t, err)
 
 		err = createPresetRoles(ctx, as)
@@ -571,7 +571,7 @@ func TestPresets(t *testing.T) {
 
 		// Create a new set of rules based on the Editor Role,
 		// setting a deny rule for a default allow rule
-		var outdateAllowRules []types.Rule
+		outdateAllowRules := []types.Rule{}
 		for _, r := range allowRules {
 			if slices.Contains(r.Resources, types.KindConnectionDiagnostic) {
 				continue
@@ -586,7 +586,7 @@ func TestPresets(t *testing.T) {
 		denyRules = append(denyRules, denyConnectionDiagnosticRule)
 		editorRole.SetRules(types.Deny, denyRules)
 
-		editorRole, err := as.CreateRole(ctx, editorRole)
+		err := as.CreateRole(ctx, editorRole)
 		require.NoError(t, err)
 
 		// Set up a changed Access Role
@@ -596,7 +596,7 @@ func TestPresets(t *testing.T) {
 		// Explicitly deny DatabaseServiceLabels
 		accessRole.SetDatabaseServiceLabels(types.Deny, types.Labels{types.Wildcard: []string{types.Wildcard}})
 
-		accessRole, err = as.CreateRole(ctx, accessRole)
+		err = as.CreateRole(ctx, accessRole)
 		require.NoError(t, err)
 
 		// Apply defaults.
@@ -650,9 +650,7 @@ func TestPresets(t *testing.T) {
 				require.False(t, types.IsSystemResource(r))
 				createdPresets[r.GetName()] = r
 			}).
-			Return(func(_ context.Context, r types.Role) (types.Role, error) {
-				return r, nil
-			})
+			Return(nil)
 
 		// EXPECT that any (and ONLY) system resources will be upserted
 		roleManager.
@@ -667,9 +665,7 @@ func TestPresets(t *testing.T) {
 				createdSystemRoles[r.GetName()] = r
 			}).
 			Maybe().
-			Return(func(_ context.Context, r types.Role) (types.Role, error) {
-				return r, nil
-			})
+			Return(nil)
 
 		err := createPresetRoles(ctx, roleManager)
 		require.NoError(t, err)
@@ -691,7 +687,7 @@ func TestPresets(t *testing.T) {
 				defer mu.Unlock()
 				require.Contains(t, createdPresets, args[1].(types.Role).GetName())
 			}).
-			Return(nil, trace.AlreadyExists("dupe"))
+			Return(trace.AlreadyExists("dupe"))
 
 		// EXPECT that any (and ONLY) expected system roles will be
 		// automatically upserted
@@ -699,9 +695,7 @@ func TestPresets(t *testing.T) {
 			On("UpsertRole", mock.Anything, mock.Anything).
 			Run(requireSystemResource(t, 1)).
 			Maybe().
-			Return(func(_ context.Context, r types.Role) (types.Role, error) {
-				return r, nil
-			})
+			Return(nil)
 
 		// EXPECT that all of the roles created in the previous step (and ONLY the
 		// roles created in the previous step will be queried.
@@ -745,7 +739,7 @@ func TestPresets(t *testing.T) {
 				require.Contains(t, createdPresets, r.GetName())
 				delete(remainingPresets, r.GetName())
 			}).
-			Return(nil, trace.AlreadyExists("dupe"))
+			Return(trace.AlreadyExists("dupe"))
 
 		// EXPECT that all of the roles created in the first step (and ONLY the
 		// roles created in the first step will be queried.
@@ -759,13 +753,13 @@ func TestPresets(t *testing.T) {
 		// AND our modified editor resource will be updated using an upsert
 		roleManager.
 			On("UpsertRole", mock.Anything, mock.Anything).
-			Return(func(_ context.Context, r types.Role) (types.Role, error) {
+			Return(func(_ context.Context, r types.Role) error {
 				if types.IsSystemResource(r) {
 					require.Contains(t, expectedSystemRoles, r.GetName())
-					return r, nil
+					return nil
 				}
 				require.Equal(t, teleport.PresetEditorRoleName, r.GetName())
-				return r, nil
+				return nil
 			})
 
 		err = createPresetRoles(ctx, roleManager)
@@ -824,7 +818,7 @@ func TestPresets(t *testing.T) {
 
 			// Preset Users were created
 			for _, user := range enterpriseUsers {
-				_, err := as.GetUser(ctx, user.GetName(), false)
+				_, err := as.GetUser(user.GetName(), false)
 				require.NoError(t, err)
 			}
 		})
@@ -842,19 +836,19 @@ func TestPresets(t *testing.T) {
 
 			// Set the expectation that all user creations will succeed EXCEPT
 			// for our known system user
-			auth.On("CreateUser", mock.Anything, mock.Anything).
+			auth.On("CreateUser", ctx, mock.Anything).
 				Run(requireSystemResource(t, 1)).
 				Maybe().
-				Return(sysUser, nil)
+				Return(nil)
 
 			// All attempts to upsert should succeed, and record the being upserted
-			var upsertedUsers []string
-			auth.On("UpsertUser", mock.Anything, mock.Anything).
+			upsertedUsers := []string{}
+			auth.On("UpsertUser", mock.Anything).
 				Run(func(args mock.Arguments) {
-					u := args.Get(1).(types.User)
+					u := args.Get(0).(types.User)
 					upsertedUsers = append(upsertedUsers, u.GetName())
 				}).
-				Return(sysUser, nil)
+				Return(nil)
 
 			// WHEN I attempt to create the preset users...
 			err := createPresetUsers(ctx, auth)
@@ -877,31 +871,31 @@ func newMockUserManager(t *testing.T) *mockUserManager {
 	return m
 }
 
-func (m *mockUserManager) CreateUser(ctx context.Context, user types.User) (types.User, error) {
-	type delegateFn = func(context.Context, types.User) (types.User, error)
+func (m *mockUserManager) CreateUser(ctx context.Context, user types.User) error {
+	type delegateFn = func(types.User) error
 	args := m.Called(ctx, user)
 	if delegate, ok := args.Get(0).(delegateFn); ok {
-		return delegate(ctx, user)
+		return delegate(user)
+	}
+	return args.Error(0)
+}
+
+func (m *mockUserManager) GetUser(username string, withSecrets bool) (types.User, error) {
+	type delegateFn = func(username string, withSecrets bool) (types.User, error)
+	args := m.Called(username, withSecrets)
+	if delegate, ok := args.Get(0).(delegateFn); ok {
+		return delegate(username, withSecrets)
 	}
 	return args.Get(0).(types.User), args.Error(1)
 }
 
-func (m *mockUserManager) GetUser(ctx context.Context, username string, withSecrets bool) (types.User, error) {
-	type delegateFn = func(ctx context.Context, username string, withSecrets bool) (types.User, error)
-	args := m.Called(ctx, username, withSecrets)
+func (m *mockUserManager) UpsertUser(user types.User) error {
+	type delegateFn = func(types.User) error
+	args := m.Called(user)
 	if delegate, ok := args.Get(0).(delegateFn); ok {
-		return delegate(ctx, username, withSecrets)
+		return delegate(user)
 	}
-	return args.Get(0).(types.User), args.Error(1)
-}
-
-func (m *mockUserManager) UpsertUser(ctx context.Context, user types.User) (types.User, error) {
-	type delegateFn = func(context.Context, types.User) (types.User, error)
-	args := m.Called(ctx, user)
-	if delegate, ok := args.Get(0).(delegateFn); ok {
-		return delegate(ctx, user)
-	}
-	return args.Get(0).(types.User), args.Error(1)
+	return args.Error(0)
 }
 
 var _ PresetUsers = &mockUserManager{}
@@ -919,16 +913,13 @@ func newMockRoleManager(t *testing.T) *mockRoleManager {
 }
 
 // CreateRole creates a role.
-func (m *mockRoleManager) CreateRole(ctx context.Context, role types.Role) (types.Role, error) {
-	type delegateFn = func(context.Context, types.Role) (types.Role, error)
+func (m *mockRoleManager) CreateRole(ctx context.Context, role types.Role) error {
+	type delegateFn = func(context.Context, types.Role) error
 	args := m.Called(ctx, role)
 	if delegate, ok := args[0].(delegateFn); ok {
 		return delegate(ctx, role)
 	}
-	if args[0] == nil {
-		return nil, args.Error(1)
-	}
-	return args[0].(types.Role), args.Error(1)
+	return args.Error(0)
 }
 
 func (m *mockRoleManager) GetRole(ctx context.Context, name string) (types.Role, error) {
@@ -937,19 +928,16 @@ func (m *mockRoleManager) GetRole(ctx context.Context, name string) (types.Role,
 	if delegate, ok := args[0].(delegateFn); ok {
 		return delegate(ctx, name)
 	}
-	if args[0] == nil {
-		return nil, args.Error(1)
-	}
 	return args[0].(types.Role), args.Error(1)
 }
 
-func (m *mockRoleManager) UpsertRole(ctx context.Context, role types.Role) (types.Role, error) {
-	type delegateFn = func(context.Context, types.Role) (types.Role, error)
+func (m *mockRoleManager) UpsertRole(ctx context.Context, role types.Role) error {
+	type delegateFn = func(context.Context, types.Role) error
 	args := m.Called(ctx, role)
 	if delegate, ok := args[0].(delegateFn); ok {
 		return delegate(ctx, role)
 	}
-	return args[0].(types.Role), args.Error(1)
+	return args.Error(0)
 }
 
 func requireSystemResource(t *testing.T, argno int) func(mock.Arguments) {

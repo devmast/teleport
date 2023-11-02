@@ -80,12 +80,6 @@ type Database struct {
 type DatabaseAdminUser struct {
 	// Name is the database admin username (e.g. "postgres").
 	Name string
-	// DefaultDatabase is the database that the admin user logs into by
-	// default.
-	//
-	// Depending on the database type, this database may be used to store
-	// procedures or data for managing database users.
-	DefaultDatabase string
 }
 
 // OracleOptions are additional Oracle options.
@@ -164,8 +158,7 @@ func (d *Database) ToDatabase() (types.Database, error) {
 			ServerVersion: d.MySQL.ServerVersion,
 		},
 		AdminUser: &types.DatabaseAdminUser{
-			Name:            d.AdminUser.Name,
-			DefaultDatabase: d.AdminUser.DefaultDatabase,
+			Name: d.AdminUser.Name,
 		},
 		Oracle: convOracleOptions(d.Oracle),
 		AWS: types.AWS{

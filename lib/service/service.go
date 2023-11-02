@@ -2282,28 +2282,17 @@ func (process *TeleportProcess) newLocalCacheForDatabase(clt auth.ClientI, cache
 	return auth.NewDatabaseWrapper(clt, cache), nil
 }
 
-// combinedDiscoveryClient is an auth.Client client with other, specific, services added to it.
-type combinedDiscoveryClient struct {
-	auth.ClientI
-	services.DiscoveryConfigsGetter
-}
-
 // newLocalCacheForDiscovery returns a new instance of access point for a discovery service.
 func (process *TeleportProcess) newLocalCacheForDiscovery(clt auth.ClientI, cacheName []string) (auth.DiscoveryAccessPoint, error) {
-	client := combinedDiscoveryClient{
-		ClientI:                clt,
-		DiscoveryConfigsGetter: clt.DiscoveryConfigClient(),
-	}
-
 	// if caching is disabled, return access point
 	if !process.Config.CachePolicy.Enabled {
-		return client, nil
+		return clt, nil
 	}
 	cache, err := process.NewLocalCache(clt, cache.ForDiscovery, cacheName)
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
-	return auth.NewDiscoveryWrapper(client, cache), nil
+	return auth.NewDiscoveryWrapper(clt, cache), nil
 }
 
 // newLocalCacheForProxy returns new instance of access point configured for a local proxy.
@@ -2742,10 +2731,6 @@ func (process *TeleportProcess) initSSH() error {
 		// Block and wait while the node is running.
 		event, err := process.WaitForEvent(process.ExitContext(), TeleportExitEvent)
 		if err != nil {
-			if process.ExitContext().Err() != nil {
-				// doing a very un-graceful exit
-				return nil
-			}
 			return trace.Wrap(err)
 		}
 
@@ -4104,7 +4089,7 @@ func (process *TeleportProcess) initProxyEndpoint(conn *Connector) error {
 				ErrorLog:          utils.NewStdlogger(log.Error, teleport.ComponentProxy),
 				ConnState:         ingress.HTTPConnStateReporter(ingress.Web, ingressReporter),
 				ConnContext: func(ctx context.Context, c net.Conn) context.Context {
-					return authz.ContextWithClientAddrs(ctx, c.RemoteAddr(), c.LocalAddr())
+					return utils.ClientAddrContext(ctx, c.RemoteAddr(), c.LocalAddr())
 				},
 			},
 			Handler: webHandler,

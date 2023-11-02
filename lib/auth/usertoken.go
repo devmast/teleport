@@ -63,12 +63,6 @@ const (
 	// second factor re-authentication which in other cases would be required eg:
 	// allowing user to add a mfa device if they don't have any registered.
 	UserTokenTypePrivilegeException = "privilege_exception"
-
-	// userTokenTypePrivilegeOTP is used to hold OTP data during (otherwise)
-	// token-less registrations.
-	// This kind of token is an internal artifact of Teleport and should only be
-	// allowed for OTP device registrations.
-	userTokenTypePrivilegeOTP = "privilege_otp"
 )
 
 // CreateUserTokenRequest is a request to create a new user token.
@@ -124,7 +118,7 @@ func (r *CreateUserTokenRequest) CheckAndSetDefaults() error {
 	case UserTokenTypeRecoveryApproved:
 		r.TTL = defaults.RecoveryApprovedTokenTTL
 
-	case UserTokenTypePrivilege, UserTokenTypePrivilegeException, userTokenTypePrivilegeOTP:
+	case UserTokenTypePrivilege, UserTokenTypePrivilegeException:
 		r.TTL = defaults.PrivilegeTokenTTL
 
 	default:
@@ -145,7 +139,7 @@ func (a *Server) CreateResetPasswordToken(ctx context.Context, req CreateUserTok
 		return nil, trace.BadParameter("invalid reset password token request type")
 	}
 
-	_, err = a.ResetPassword(ctx, req.Name)
+	_, err = a.ResetPassword(req.Name)
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
@@ -242,7 +236,7 @@ func formatAccountName(s proxyDomainGetter, username string, authHostname string
 	return fmt.Sprintf("%v@%v", username, proxyHost), nil
 }
 
-// createTOTPUserTokenSecrets creates new UserTokenSecrets resource for the given token.
+// createTOTPUserTokenSecrets creates new UserTokenSecretes resource for the given token.
 func (a *Server) createTOTPUserTokenSecrets(ctx context.Context, token types.UserToken, otpKey *otp.Key) (types.UserTokenSecrets, error) {
 	// Create QR code.
 	var otpQRBuf bytes.Buffer
@@ -468,6 +462,7 @@ func (a *Server) CreatePrivilegeToken(ctx context.Context, req *proto.CreatePriv
 	}
 
 	tokenKind := UserTokenTypePrivilege
+
 	switch hasDevices, err := a.validateMFAAuthResponseForRegister(
 		ctx, req.GetExistingMFAResponse(), username, false /* passwordless */); {
 	case err != nil:

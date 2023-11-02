@@ -601,11 +601,7 @@ func NewDatabaseFromRDSV2Instance(instance *rdsTypesV2.DBInstance) (types.Databa
 
 	uri := ""
 	if instance.Endpoint != nil && instance.Endpoint.Address != nil {
-		if instance.Endpoint.Port != nil {
-			uri = fmt.Sprintf("%s:%d", aws.StringValue(instance.Endpoint.Address), *instance.Endpoint.Port)
-		} else {
-			uri = aws.StringValue(instance.Endpoint.Address)
-		}
+		uri = fmt.Sprintf("%s:%d", aws.StringValue(instance.Endpoint.Address), instance.Endpoint.Port)
 	}
 
 	return types.NewDatabaseV3(
@@ -637,7 +633,7 @@ func MetadataFromRDSV2Instance(rdsInstance *rdsTypesV2.DBInstance) (*types.AWS, 
 			InstanceID: aws.StringValue(rdsInstance.DBInstanceIdentifier),
 			ClusterID:  aws.StringValue(rdsInstance.DBClusterIdentifier),
 			ResourceID: aws.StringValue(rdsInstance.DbiResourceId),
-			IAMAuth:    aws.BoolValue(rdsInstance.IAMDatabaseAuthenticationEnabled),
+			IAMAuth:    rdsInstance.IAMDatabaseAuthenticationEnabled,
 			Subnets:    subnets,
 			VPCID:      vpcID,
 		},

@@ -68,7 +68,6 @@ import (
 	"github.com/gravitational/teleport/lib/auth/native"
 	"github.com/gravitational/teleport/lib/auth/touchid"
 	wancli "github.com/gravitational/teleport/lib/auth/webauthncli"
-	"github.com/gravitational/teleport/lib/authz"
 	"github.com/gravitational/teleport/lib/client/mfa"
 	"github.com/gravitational/teleport/lib/client/terminal"
 	"github.com/gravitational/teleport/lib/defaults"
@@ -472,10 +471,6 @@ type Config struct {
 	// WebauthnLogin allows tests to override the Webauthn Login func.
 	// Defaults to [wancli.Login].
 	WebauthnLogin WebauthnLoginFunc
-
-	// SSHLogDir is the directory to log the output of multiple SSH commands to.
-	// If not set, no logs will be created.
-	SSHLogDir string
 }
 
 // CachePolicy defines cache policy for local clients
@@ -1267,14 +1262,9 @@ func (tc *TeleportClient) RootClusterName(ctx context.Context) (string, error) {
 	return name, nil
 }
 
-type targetNode struct {
-	hostname string
-	addr     string
-}
-
 // getTargetNodes returns a list of node addresses this SSH command needs to
 // operate on.
-func (tc *TeleportClient) getTargetNodes(ctx context.Context, clt client.GetResourcesClient, options SSHOptions) ([]targetNode, error) {
+func (tc *TeleportClient) getTargetNodes(ctx context.Context, clt client.GetResourcesClient, options SSHOptions) ([]string, error) {
 	ctx, span := tc.Tracer.Start(
 		ctx,
 		"teleportClient/getTargetNodes",
@@ -1283,12 +1273,7 @@ func (tc *TeleportClient) getTargetNodes(ctx context.Context, clt client.GetReso
 	defer span.End()
 
 	if options.HostAddress != "" {
-		return []targetNode{
-			{
-				hostname: options.HostAddress,
-				addr:     options.HostAddress,
-			},
-		}, nil
+		return []string{options.HostAddress}, nil
 	}
 
 	// use the target node that was explicitly provided if valid
@@ -1301,12 +1286,7 @@ func (tc *TeleportClient) getTargetNodes(ctx context.Context, clt client.GetReso
 		}
 
 		addr := net.JoinHostPort(tc.Host, strconv.Itoa(tc.HostPort))
-		return []targetNode{
-			{
-				hostname: tc.Host,
-				addr:     addr,
-			},
-		}, nil
+		return []string{addr}, nil
 	}
 
 	// find the nodes matching the labels that were provided
@@ -1315,13 +1295,10 @@ func (tc *TeleportClient) getTargetNodes(ctx context.Context, clt client.GetReso
 		return nil, trace.Wrap(err)
 	}
 
-	retval := make([]targetNode, 0, len(nodes))
+	retval := make([]string, 0, len(nodes))
 	for _, resource := range nodes {
 		// always dial nodes by UUID
-		retval = append(retval, targetNode{
-			hostname: resource.GetHostname(),
-			addr:     fmt.Sprintf("%s:0", resource.GetName()),
-		})
+		retval = append(retval, fmt.Sprintf("%s:0", resource.GetName()))
 	}
 
 	return retval, nil
@@ -1579,7 +1556,7 @@ func (tc *TeleportClient) SSH(ctx context.Context, command []string, runLocally 
 	if len(nodeAddrs) > 1 {
 		return tc.runShellOrCommandOnMultipleNodes(ctx, clt, nodeAddrs, command)
 	}
-	return tc.runShellOrCommandOnSingleNode(ctx, clt, nodeAddrs[0].addr, command, runLocally)
+	return tc.runShellOrCommandOnSingleNode(ctx, clt, nodeAddrs[0], command, runLocally)
 }
 
 // ConnectToNode attempts to establish a connection to the node resolved to by the provided
@@ -1588,7 +1565,7 @@ func (tc *TeleportClient) SSH(ctx context.Context, command []string, runLocally 
 // fail the error from the connection attempt with the already provisioned certificates will
 // be returned. The client from whichever attempt succeeds first will be returned.
 func (tc *TeleportClient) ConnectToNode(ctx context.Context, clt *ClusterClient, nodeDetails NodeDetails, user string) (*NodeClient, error) {
-	node := nodeName(targetNode{addr: nodeDetails.Addr})
+	node := nodeName(nodeDetails.Addr)
 	ctx, span := tc.Tracer.Start(
 		ctx,
 		"teleportClient/ConnectToNode",
@@ -1638,8 +1615,7 @@ func (tc *TeleportClient) ConnectToNode(ctx context.Context, clt *ClusterClient,
 		}
 
 		sshConfig := clt.ProxyClient.SSHConfig(user)
-		clt, err := NewNodeClient(ctx, sshConfig, conn, nodeDetails.ProxyFormat(), nodeDetails.Addr, tc, details.FIPS,
-			WithNodeHostname(nodeDetails.hostname), WithSSHLogDir(tc.SSHLogDir))
+		clt, err := NewNodeClient(ctx, sshConfig, conn, nodeDetails.ProxyFormat(), nodeDetails.Addr, tc, details.FIPS)
 		directResultC <- clientRes{clt: clt, err: err}
 	}()
 
@@ -1739,7 +1715,7 @@ func (m MFARequiredUnknownErr) Is(err error) bool {
 // if it is required, then the mfa ceremony is attempted. The target host is dialed once the ceremony
 // completes and new certificates are retrieved.
 func (tc *TeleportClient) connectToNodeWithMFA(ctx context.Context, clt *ClusterClient, nodeDetails NodeDetails, user string) (*NodeClient, error) {
-	node := nodeName(targetNode{addr: nodeDetails.Addr})
+	node := nodeName(nodeDetails.Addr)
 	ctx, span := tc.Tracer.Start(
 		ctx,
 		"teleportClient/connectToNodeWithMFA",
@@ -1774,8 +1750,7 @@ func (tc *TeleportClient) connectToNodeWithMFA(ctx context.Context, clt *Cluster
 		return nil, trace.Wrap(err)
 	}
 
-	nodeClient, err := NewNodeClient(ctx, cfg, conn, nodeDetails.ProxyFormat(), nodeDetails.Addr, tc, details.FIPS,
-		WithNodeHostname(nodeDetails.hostname), WithSSHLogDir(tc.SSHLogDir))
+	nodeClient, err := NewNodeClient(ctx, cfg, conn, nodeDetails.ProxyFormat(), nodeDetails.Addr, tc, details.FIPS)
 	return nodeClient, trace.Wrap(err)
 }
 
@@ -1848,12 +1823,8 @@ func (tc *TeleportClient) runShellOrCommandOnSingleNode(ctx context.Context, clt
 	return trace.Wrap(nodeClient.RunInteractiveShell(ctx, types.SessionPeerMode, nil, nil))
 }
 
-func (tc *TeleportClient) runShellOrCommandOnMultipleNodes(ctx context.Context, clt *ClusterClient, nodes []targetNode, command []string) error {
+func (tc *TeleportClient) runShellOrCommandOnMultipleNodes(ctx context.Context, clt *ClusterClient, nodeAddrs []string, command []string) error {
 	cluster := clt.ClusterName()
-	nodeAddrs := make([]string, 0, len(nodes))
-	for _, node := range nodes {
-		nodeAddrs = append(nodeAddrs, node.addr)
-	}
 	ctx, span := tc.Tracer.Start(
 		ctx,
 		"teleportClient/runShellOrCommandOnMultipleNodes",
@@ -1868,7 +1839,7 @@ func (tc *TeleportClient) runShellOrCommandOnMultipleNodes(ctx context.Context, 
 	// There was a command provided, run a non-interactive session against each match
 	if len(command) > 0 {
 		fmt.Printf("\x1b[1mWARNING\x1b[0m: Multiple nodes matched label selector, running command on all.\n")
-		return tc.runCommandOnNodes(ctx, clt, nodes, command)
+		return tc.runCommandOnNodes(ctx, clt, nodeAddrs, command)
 	}
 
 	// Issue "shell" request to the first matching node.
@@ -2695,13 +2666,8 @@ func commandLimit(ctx context.Context, getter roleGetter, mfaRequired bool) int 
 	}
 }
 
-type execResult struct {
-	hostname   string
-	exitStatus int
-}
-
 // runCommandOnNodes executes a given bash command on a bunch of remote nodes.
-func (tc *TeleportClient) runCommandOnNodes(ctx context.Context, clt *ClusterClient, nodes []targetNode, command []string) error {
+func (tc *TeleportClient) runCommandOnNodes(ctx context.Context, clt *ClusterClient, nodeAddresses []string, command []string) error {
 	cluster := clt.ClusterName()
 	ctx, span := tc.Tracer.Start(
 		ctx,
@@ -2719,7 +2685,7 @@ func (tc *TeleportClient) runCommandOnNodes(ctx context.Context, clt *ClusterCli
 	mfaRequiredCheck, err := clt.AuthClient.IsMFARequired(ctx, &proto.IsMFARequiredRequest{
 		Target: &proto.IsMFARequiredRequest_Node{
 			Node: &proto.NodeLogin{
-				Node:  nodeName(targetNode{addr: nodes[0].addr}),
+				Node:  nodeName(nodeAddresses[0]),
 				Login: tc.Config.HostLogin,
 			},
 		},
@@ -2728,24 +2694,16 @@ func (tc *TeleportClient) runCommandOnNodes(ctx context.Context, clt *ClusterCli
 		return trace.Wrap(err)
 	}
 
-	if tc.SSHLogDir != "" {
-		if err := os.MkdirAll(tc.SSHLogDir, 0700); err != nil {
-			return trace.ConvertSystemError(err)
-		}
-	}
-
-	resultsCh := make(chan execResult, len(nodes))
-
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(commandLimit(ctx, clt.AuthClient, mfaRequiredCheck.Required))
-	for _, node := range nodes {
-		node := node
+	for _, address := range nodeAddresses {
+		address := address
 		g.Go(func() error {
 			ctx, span := tc.Tracer.Start(
 				gctx,
 				"teleportClient/executingCommand",
 				oteltrace.WithSpanKind(oteltrace.SpanKindClient),
-				oteltrace.WithAttributes(attribute.String("node", node.addr)),
+				oteltrace.WithAttributes(attribute.String("node", address)),
 			)
 			defer span.End()
 
@@ -2753,93 +2711,26 @@ func (tc *TeleportClient) runCommandOnNodes(ctx context.Context, clt *ClusterCli
 				ctx,
 				clt,
 				NodeDetails{
-					Addr:      node.addr,
+					Addr:      address,
 					Namespace: tc.Namespace,
 					Cluster:   cluster,
 					MFACheck:  mfaRequiredCheck,
-					hostname:  node.hostname,
 				},
 				tc.Config.HostLogin,
 			)
 			if err != nil {
-				// Returning the error here would cancel all the other goroutines, so
-				// print the error instead to let them all finish.
 				fmt.Fprintln(tc.Stderr, err)
-				return nil
+				return trace.Wrap(err)
 			}
 			defer nodeClient.Close()
 
-			displayName := nodeName(node)
-			fmt.Printf("Running command on %v:\n", displayName)
+			fmt.Printf("Running command on %v:\n", nodeName(address))
 
-			if err := nodeClient.RunCommand(ctx, command, WithLabeledOutput()); err != nil && tc.ExitStatus == 0 {
-				fmt.Fprintln(tc.Stderr, err)
-				return nil
-			}
-			resultsCh <- execResult{
-				hostname:   displayName,
-				exitStatus: tc.ExitStatus,
-			}
-			return nil
+			return trace.Wrap(nodeClient.RunCommand(ctx, command))
 		})
 	}
 
-	// Non-command-related errors will have already been reported by the goroutines,
-	// and command-related errors will be reported in writeCommandResults.
-	g.Wait()
-
-	close(resultsCh)
-	results := make([]execResult, 0, len(resultsCh))
-	for result := range resultsCh {
-		results = append(results, result)
-	}
-
-	return trace.Wrap(tc.writeCommandResults(results))
-}
-
-func (tc *TeleportClient) writeCommandResults(nodes []execResult) error {
-	fmt.Println()
-	var succeededNodes []string
-	var failedNodes []string
-	for _, node := range nodes {
-		if node.exitStatus != 0 {
-			failedNodes = append(failedNodes, node.hostname)
-			fmt.Printf("[%v] failed with exit code %d\n", node.hostname, node.exitStatus)
-		} else {
-			succeededNodes = append(succeededNodes, node.hostname)
-			fmt.Printf("[%v] success\n", node.hostname)
-		}
-	}
-	fmt.Printf("\n%d host(s) succeeded; %d host(s) failed\n", len(succeededNodes), len(failedNodes))
-
-	if tc.SSHLogDir != "" {
-		if len(succeededNodes) > 0 {
-			successFile, err := os.Create(filepath.Join(tc.SSHLogDir, "hosts.succeeded"))
-			if err != nil {
-				return trace.Wrap(err)
-			}
-			defer successFile.Close()
-			for _, node := range succeededNodes {
-				fmt.Fprintln(successFile, node)
-			}
-		}
-
-		if len(failedNodes) > 0 {
-			failFile, err := os.Create(filepath.Join(tc.SSHLogDir, "hosts.failed"))
-			if err != nil {
-				return trace.Wrap(err)
-			}
-			defer failFile.Close()
-			for _, node := range failedNodes {
-				fmt.Fprintln(failFile, node)
-			}
-		}
-	}
-
-	if len(failedNodes) > 0 {
-		return trace.Errorf("%d command(s) failed", len(failedNodes))
-	}
-	return nil
+	return trace.Wrap(g.Wait())
 }
 
 func (tc *TeleportClient) newSessionEnv() map[string]string {
@@ -3212,7 +3103,7 @@ func CreatePROXYHeaderGetter(ctx context.Context, proxySigner multiplexer.PROXYH
 		return nil
 	}
 
-	src, dst := authz.ClientAddrsFromContext(ctx)
+	src, dst := utils.ClientAddrFromContext(ctx)
 	if src != nil && dst != nil {
 		return func() ([]byte, error) {
 			return proxySigner.SignPROXYHeader(src, dst)
@@ -4276,9 +4167,9 @@ func (tc *TeleportClient) Ping(ctx context.Context) (*webclient.PingResponse, er
 		return nil, trace.Wrap(err)
 	}
 
-	// Verify server->client and client->server compatibility.
-	if tc.CheckVersions {
-		if !utils.MeetsVersion(teleport.Version, pr.MinClientVersion) {
+	// If version checking was requested and the server advertises a minimum version.
+	if tc.CheckVersions && pr.MinClientVersion != "" {
+		if err := utils.CheckVersion(teleport.Version, pr.MinClientVersion); err != nil && trace.IsBadParameter(err) {
 			fmt.Fprintf(tc.Stderr, `
 			WARNING
 			Detected potentially incompatible client and server versions.
@@ -4286,18 +4177,6 @@ func (tc *TeleportClient) Ping(ctx context.Context) (*webclient.PingResponse, er
 			Please upgrade tsh to %v or newer or use the --skip-version-check flag to bypass this check.
 			Future versions of tsh will fail when incompatible versions are detected.
 			`, pr.MinClientVersion, teleport.Version, pr.MinClientVersion)
-		}
-
-		// Recent `tsh mfa` changes require at least Teleport v15.
-		const minServerVersion = "15.0.0-aa" // "-aa" matches all development versions
-		if !utils.MeetsVersion(pr.ServerVersion, minServerVersion) {
-			fmt.Fprintf(tc.Stderr, `
-			WARNING
-			Detected incompatible client and server versions.
-			Minimum server version supported by tsh is %v but your server is using %v.
-			Please use a tsh version that matches your server.
-			You may use the --skip-version-check flag to bypass this check.
-			`, minServerVersion, pr.ServerVersion)
 		}
 	}
 
@@ -4681,7 +4560,7 @@ func connectToSSHAgent() agent.ExtendedAgent {
 	socketPath := os.Getenv(teleport.SSHAuthSock)
 	conn, err := agentconn.Dial(socketPath)
 	if err != nil {
-		log.Warnf("[KEY AGENT] Unable to connect to SSH agent on socket %q: %v", socketPath, err)
+		log.WithError(err).Errorf("[KEY AGENT] Unable to connect to SSH agent on socket: %q.", socketPath)
 		return nil
 	}
 

@@ -281,6 +281,11 @@ func (c *Client) SearchSessionEvents(ctx context.Context, req events.SearchSessi
 	return events, lastKey, nil
 }
 
+// CreateRole not implemented: can only be called locally.
+func (c *Client) CreateRole(ctx context.Context, role types.Role) error {
+	return trace.NotImplemented(notImplementedMessage)
+}
+
 // UpsertClusterName not implemented: can only be called locally.
 func (c *Client) UpsertClusterName(cn types.ClusterName) error {
 	return trace.NotImplemented(notImplementedMessage)
@@ -301,13 +306,13 @@ func (c *Client) DeleteAllReverseTunnels() error {
 	return trace.NotImplemented(notImplementedMessage)
 }
 
-// DeleteAllNamespaces not implemented: can only be called locally.
+// DeleteAllCertNamespaces not implemented: can only be called locally.
 func (c *Client) DeleteAllNamespaces() error {
 	return trace.NotImplemented(notImplementedMessage)
 }
 
 // DeleteAllRoles not implemented: can only be called locally.
-func (c *Client) DeleteAllRoles(context.Context) error {
+func (c *Client) DeleteAllRoles() error {
 	return trace.NotImplemented(notImplementedMessage)
 }
 
@@ -322,7 +327,7 @@ func (c *Client) ListWindowsDesktopServices(ctx context.Context, req types.ListW
 }
 
 // DeleteAllUsers not implemented: can only be called locally.
-func (c *Client) DeleteAllUsers(ctx context.Context) error {
+func (c *Client) DeleteAllUsers() error {
 	return trace.NotImplemented(notImplementedMessage)
 }
 
@@ -444,31 +449,8 @@ func (c *Client) AccessListClient() services.AccessLists {
 	return c.APIClient.AccessListClient()
 }
 
-func (c *Client) ExternalCloudAuditClient() services.ExternalCloudAudits {
-	return c.APIClient.ExternalCloudAuditClient()
-}
-
 func (c *Client) UserLoginStateClient() services.UserLoginStates {
 	return c.APIClient.UserLoginStateClient()
-}
-
-// UpsertUser user updates user entry.
-func (c *Client) UpsertUser(ctx context.Context, user types.User) (types.User, error) {
-	data, err := services.MarshalUser(user)
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-	_, err = c.HTTPClient.PostJSON(ctx, c.Endpoint("users"), &upsertUserRawReq{User: data})
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-
-	upserted, err := c.GetUser(ctx, user.GetName(), false)
-	return upserted, trace.Wrap(err)
 }
 
 // DiscoveryConfigClient returns a client for managing the DiscoveryConfig resource.
@@ -495,11 +477,7 @@ type WebService interface {
 
 // IdentityService manages identities and users
 type IdentityService interface {
-	// CreateOIDCConnector creates a new OIDC connector.
-	CreateOIDCConnector(ctx context.Context, connector types.OIDCConnector) (types.OIDCConnector, error)
-	// UpdateOIDCConnector updates an existing OIDC connector.
-	UpdateOIDCConnector(ctx context.Context, connector types.OIDCConnector) (types.OIDCConnector, error)
-	// UpsertOIDCConnector updates or creates an OIDC connector.
+	// UpsertOIDCConnector updates or creates OIDC connector
 	UpsertOIDCConnector(ctx context.Context, connector types.OIDCConnector) error
 	// GetOIDCConnector returns OIDC connector information by id
 	GetOIDCConnector(ctx context.Context, id string, withSecrets bool) (types.OIDCConnector, error)
@@ -514,11 +492,7 @@ type IdentityService interface {
 	// ValidateOIDCAuthCallback validates OIDC auth callback returned from redirect
 	ValidateOIDCAuthCallback(ctx context.Context, q url.Values) (*OIDCAuthResponse, error)
 
-	// CreateSAMLConnector creates a new SAML connector.
-	CreateSAMLConnector(ctx context.Context, connector types.SAMLConnector) (types.SAMLConnector, error)
-	// UpdateSAMLConnector updates an existing SAML connector
-	UpdateSAMLConnector(ctx context.Context, connector types.SAMLConnector) (types.SAMLConnector, error)
-	// UpsertSAMLConnector updates or creates a SAML connector
+	// UpsertSAMLConnector updates or creates SAML connector
 	UpsertSAMLConnector(ctx context.Context, connector types.SAMLConnector) error
 	// GetSAMLConnector returns SAML connector information by id
 	GetSAMLConnector(ctx context.Context, id string, withSecrets bool) (types.SAMLConnector, error)
@@ -533,11 +507,7 @@ type IdentityService interface {
 	// GetSAMLAuthRequest returns SAML auth request if found
 	GetSAMLAuthRequest(ctx context.Context, authRequestID string) (*types.SAMLAuthRequest, error)
 
-	// CreateGithubConnector creates a new Github connector.
-	CreateGithubConnector(ctx context.Context, connector types.GithubConnector) (types.GithubConnector, error)
-	// UpdateGithubConnector updates an existing Github connector.
-	UpdateGithubConnector(ctx context.Context, connector types.GithubConnector) (types.GithubConnector, error)
-	// UpsertGithubConnector creates or updates a Github connector.
+	// UpsertGithubConnector creates or updates a Github connector
 	UpsertGithubConnector(ctx context.Context, connector types.GithubConnector) error
 	// GetGithubConnectors returns all configured Github connectors
 	GetGithubConnectors(ctx context.Context, withSecrets bool) ([]types.GithubConnector, error)
@@ -556,7 +526,7 @@ type IdentityService interface {
 	GetSSODiagnosticInfo(ctx context.Context, authKind string, authRequestID string) (*types.SSODiagnosticInfo, error)
 
 	// GetUser returns user by name
-	GetUser(ctx context.Context, name string, withSecrets bool) (types.User, error)
+	GetUser(name string, withSecrets bool) (types.User, error)
 
 	// GetCurrentUser returns current user as seen by the server.
 	// Useful especially in the context of remote clusters which perform role and trait mapping.
@@ -566,10 +536,10 @@ type IdentityService interface {
 	GetCurrentUserRoles(ctx context.Context) ([]types.Role, error)
 
 	// CreateUser inserts a new entry in a backend.
-	CreateUser(ctx context.Context, user types.User) (types.User, error)
+	CreateUser(ctx context.Context, user types.User) error
 
 	// UpdateUser updates an existing user in a backend.
-	UpdateUser(ctx context.Context, user types.User) (types.User, error)
+	UpdateUser(ctx context.Context, user types.User) error
 
 	// UpdateAndSwapUser reads an existing user, runs `fn` against it and writes
 	// the result to storage. Return `false` from `fn` to avoid storage changes.
@@ -578,7 +548,7 @@ type IdentityService interface {
 	UpdateAndSwapUser(ctx context.Context, user string, withSecrets bool, fn func(types.User) (changed bool, err error)) (types.User, error)
 
 	// UpsertUser user updates or inserts user entry
-	UpsertUser(ctx context.Context, user types.User) (types.User, error)
+	UpsertUser(user types.User) error
 
 	// CompareAndSwapUser updates an existing user in a backend, but fails if
 	// the user in the backend does not match the expected value.
@@ -588,10 +558,7 @@ type IdentityService interface {
 	DeleteUser(ctx context.Context, user string) error
 
 	// GetUsers returns a list of usernames registered in the system
-	GetUsers(ctx context.Context, withSecrets bool) ([]types.User, error)
-
-	// ListUsers returns a page of users.
-	ListUsers(ctx context.Context, pageSize int, pageToken string, withSecrets bool) ([]types.User, string, error)
+	GetUsers(withSecrets bool) ([]types.User, error)
 
 	// ChangePassword changes user password
 	ChangePassword(ctx context.Context, req *proto.ChangePasswordRequest) error
@@ -609,8 +576,6 @@ type IdentityService interface {
 	// GenerateUserSingleUseCerts is like GenerateUserCerts but issues a
 	// certificate for a single session
 	// (https://github.com/gravitational/teleport/blob/3a1cf9111c2698aede2056513337f32bfc16f1f1/rfd/0014-session-2FA.md#sessions).
-	//
-	// Deprecated: Use GenerateUserCerts instead.
 	GenerateUserSingleUseCerts(ctx context.Context) (proto.AuthService_GenerateUserSingleUseCertsClient, error)
 
 	// IsMFARequired is a request to check whether MFA is required to
@@ -618,7 +583,7 @@ type IdentityService interface {
 	IsMFARequired(ctx context.Context, req *proto.IsMFARequiredRequest) (*proto.IsMFARequiredResponse, error)
 
 	// DeleteAllUsers deletes all users
-	DeleteAllUsers(ctx context.Context) error
+	DeleteAllUsers() error
 
 	// CreateResetPasswordToken creates a new user reset token
 	CreateResetPasswordToken(ctx context.Context, req CreateUserTokenRequest) (types.UserToken, error)
@@ -639,9 +604,9 @@ type IdentityService interface {
 
 	// GetMFADevices fetches all MFA devices registered for the calling user.
 	GetMFADevices(ctx context.Context, in *proto.GetMFADevicesRequest) (*proto.GetMFADevicesResponse, error)
-	// Deprecated: Use AddMFADeviceSync instead.
+	// AddMFADevice adds a new MFA device for the calling user.
 	AddMFADevice(ctx context.Context) (proto.AuthService_AddMFADeviceClient, error)
-	// Deprecated: Use DeleteMFADeviceSync instead.
+	// DeleteMFADevice deletes a MFA device for the calling user.
 	DeleteMFADevice(ctx context.Context) (proto.AuthService_DeleteMFADeviceClient, error)
 	// AddMFADeviceSync adds a new MFA device (nonstream).
 	AddMFADeviceSync(ctx context.Context, req *proto.AddMFADeviceSyncRequest) (*proto.AddMFADeviceSyncResponse, error)
@@ -910,12 +875,6 @@ type ClientI interface {
 	// still get a client when calling this method, but all RPCs will return
 	// "not implemented" errors (as per the default gRPC behavior).
 	ResourceUsageClient() resourceusagepb.ResourceUsageServiceClient
-
-	// ExternalCloudAuditClient returns an external cloud audit client.
-	// Clients connecting to non-Enterprise clusters, or older Teleport versions,
-	// still get a client when calling this method, but all RPCs will return
-	// "not implemented" errors (as per the default gRPC behavior).
-	ExternalCloudAuditClient() services.ExternalCloudAudits
 
 	// CloneHTTPClient creates a new HTTP client with the same configuration.
 	CloneHTTPClient(params ...roundtrip.ClientParam) (*HTTPClient, error)

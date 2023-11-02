@@ -768,6 +768,9 @@ func (s *remoteSite) Dial(params reversetunnelclient.DialParams) (net.Conn, erro
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
+	if err := checkNodeAndRecConfig(params, localRecCfg); err != nil {
+		return nil, trace.Wrap(err)
+	}
 
 	if shouldDialAndForward(params, localRecCfg) {
 		return s.dialAndForward(params)
@@ -855,7 +858,7 @@ func (s *remoteSite) dialAndForward(params reversetunnelclient.DialParams) (_ ne
 		LocalAuthClient:          s.localClient,
 		TargetClusterAccessPoint: s.remoteAccessPoint,
 		UserAgent:                userAgent,
-		IsAgentlessNode:          params.IsAgentlessNode,
+		IsAgentlessNode:          isAgentlessNode(params),
 		AgentlessSigner:          params.AgentlessSigner,
 		TargetConn:               targetConn,
 		SrcAddr:                  params.From,

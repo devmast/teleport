@@ -32,10 +32,6 @@ updates:
       - jentfoo
       - rosstimothy
       - zmb3
-    labels:
-      - "dependencies"
-      - "go"
-      - "no-changelog"
 
   - package-ecosystem: gomod
     directory: "/api"
@@ -54,10 +50,6 @@ updates:
       - jentfoo
       - rosstimothy
       - zmb3
-    labels:
-      - "dependencies"
-      - "go"
-      - "no-changelog"
 
   - package-ecosystem: gomod
     directory: "/assets/aws"
@@ -80,10 +72,6 @@ updates:
       - rosstimothy
       - tcsc
       - zmb3
-    labels:
-      - "dependencies"
-      - "go"
-      - "no-changelog"
 
   - package-ecosystem: gomod
     directory: "/assets/backport"
@@ -102,10 +90,6 @@ updates:
       - jentfoo
       - rosstimothy
       - zmb3
-    labels:
-      - "dependencies"
-      - "go"
-      - "no-changelog"
 
   - package-ecosystem: gomod
     directory: "/build.assets/tooling"
@@ -128,10 +112,6 @@ updates:
       - jentfoo
       - rosstimothy
       - zmb3
-    labels:
-      - "dependencies"
-      - "go"
-      - "no-changelog"
 
   - package-ecosystem: gomod
     directory: "/integrations/kube-agent-updater"
@@ -151,10 +131,6 @@ updates:
       - jentfoo
       - rosstimothy
       - zmb3
-    labels:
-      - "dependencies"
-      - "go"
-      - "no-changelog"
 
   - package-ecosystem: cargo
     directory: "/"
@@ -174,10 +150,6 @@ updates:
       - jentfoo
       - rosstimothy
       - zmb3
-    labels:
-      - "dependencies"
-      - "rust"
-      - "no-changelog"
 
   - package-ecosystem: cargo
     directory: "/lib/srv/desktop/rdp/rdpclient"
@@ -197,10 +169,6 @@ updates:
       - jentfoo
       - rosstimothy
       - zmb3
-    labels:
-      - "dependencies"
-      - "rust"
-      - "no-changelog"
 
   - package-ecosystem: github-actions
     directory: "/"
@@ -214,7 +182,3 @@ updates:
       - jentfoo
       - fheinecke
       - camscale
-    labels:
-      - "dependencies"
-      - "github_actions"
-      - "no-changelog"

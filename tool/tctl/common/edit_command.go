@@ -20,7 +20,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -46,10 +45,6 @@ type EditCommand struct {
 	cmd    *kingpin.CmdClause
 	config *servicecfg.Config
 	ref    services.Ref
-
-	// editor is used by tests to inject the editing mechanism
-	// so that different scenarios can be asserted.
-	editor func(filename string) error
 }
 
 func (e *EditCommand) Initialize(app *kingpin.Application, config *servicecfg.Config) {
@@ -64,40 +59,14 @@ func (e *EditCommand) Initialize(app *kingpin.Application, config *servicecfg.Co
 	$ tctl edit rc/remote`).SetValue(&e.ref)
 }
 
-func (e *EditCommand) TryRun(ctx context.Context, cmd string, client auth.ClientI) (bool, error) {
+func (e *EditCommand) TryRun(ctx context.Context, cmd string, client auth.ClientI) (match bool, err error) {
 	if cmd != e.cmd.FullCommand() {
 		return false, nil
 	}
 
-	err := e.editResource(ctx, client)
-	return true, trace.Wrap(err)
-}
-
-func (e *EditCommand) runEditor(ctx context.Context, name string) error {
-	if e.editor != nil {
-		return trace.Wrap(e.editor(name))
-	}
-
-	textEditor := getTextEditor()
-	args := strings.Fields(textEditor)
-	editorCmd := exec.CommandContext(ctx, args[0], append(args[1:], name)...)
-	editorCmd.Stdin = os.Stdin
-	editorCmd.Stdout = os.Stdout
-	editorCmd.Stderr = os.Stderr
-	if err := editorCmd.Start(); err != nil {
-		return trace.BadParameter("could not start editor %v: %v", textEditor, err)
-	}
-	if err := editorCmd.Wait(); err != nil {
-		return trace.BadParameter("skipping resource update, editor did not complete successfully: %v", err)
-	}
-
-	return nil
-}
-
-func (e *EditCommand) editResource(ctx context.Context, client auth.ClientI) error {
 	f, err := os.CreateTemp("", "teleport-resource*.yaml")
 	if err != nil {
-		return trace.Wrap(err)
+		return true, trace.Wrap(err)
 	}
 
 	defer func() {
@@ -118,82 +87,63 @@ func (e *EditCommand) editResource(ctx context.Context, client auth.ClientI) err
 
 	err = rc.Get(ctx, client)
 	if closeErr := f.Close(); closeErr != nil {
-		return trace.Wrap(err)
+		return true, trace.Wrap(err)
 	}
 	if err != nil {
-		return trace.Wrap(err, "could not get resource %v: %v", rc.ref.String(), err)
+		return true, trace.Wrap(err, "could not get resource %v: %v", rc.ref.String(), err)
 	}
 
 	originalSum, err := checksum(f.Name())
 	if err != nil {
-		return trace.Wrap(err)
+		return true, trace.Wrap(err)
 	}
 
 	originalName, err := resourceName(f.Name())
 	if err != nil {
-		return trace.Wrap(err)
+		return true, trace.Wrap(err)
 	}
 
-	if err := e.runEditor(ctx, f.Name()); err != nil {
-		return trace.Wrap(err)
+	args := strings.Fields(editor())
+	editorCmd := exec.CommandContext(ctx, args[0], append(args[1:], f.Name())...)
+	editorCmd.Stdin = os.Stdin
+	editorCmd.Stdout = os.Stdout
+	editorCmd.Stderr = os.Stderr
+	if err := editorCmd.Start(); err != nil {
+		return true, trace.BadParameter("could not start editor %v: %v", editor(), err)
+	}
+	if err := editorCmd.Wait(); err != nil {
+		return true, trace.BadParameter("skipping resource update, editor did not complete successfully: %v", err)
 	}
 
 	newSum, err := checksum(f.Name())
 	if err != nil {
-		return trace.Wrap(err)
+		return true, trace.Wrap(err)
 	}
 
 	// nothing to do if the resource was not modified
 	if newSum == originalSum {
 		fmt.Println("edit canceled, no changes made")
-		return nil
+		return true, nil
 	}
 
 	newName, err := resourceName(f.Name())
 	if err != nil {
-		return trace.Wrap(err)
+		return true, trace.Wrap(err)
 	}
 
 	if originalName != newName {
-		return trace.NotImplemented("renaming resources is not supported with tctl edit")
+		return true, trace.NotImplemented("renaming resources is not supported with tctl edit")
 	}
 
-	f, err = utils.OpenFileAllowingUnsafeLinks(rc.filename)
-	if err != nil {
-		return trace.Wrap(err)
-	}
-	defer f.Close()
-
-	decoder := kyaml.NewYAMLOrJSONDecoder(f, defaults.LookaheadBufSize)
-	var raw services.UnknownResource
-	if err := decoder.Decode(&raw); err != nil {
-		if errors.Is(err, io.EOF) {
-			return trace.BadParameter("no resources found, empty input?")
-		}
-		return trace.Wrap(err)
+	if err := rc.Create(ctx, client); err != nil {
+		return true, trace.Wrap(err)
 	}
 
-	// Use the UpdateHandler if the resource has one, otherwise fallback to using
-	// the CreateHandler. UpdateHandlers are preferred over CreateHandler because an update
-	// will not forcibly overwrite a resource unlike with create which requires the force
-	// flag to be set to update an existing resource.
-	updator, found := rc.UpdateHandlers[ResourceKind(raw.Kind)]
-	if found {
-		return trace.Wrap(updator(ctx, client, raw))
-	}
-
-	// TODO(tross) remove the fallback to CreateHandlers once all the resources
-	// have been updated to implement an UpdateHandler.
-	if creator, found := rc.CreateHandlers[ResourceKind(raw.Kind)]; found {
-		return trace.Wrap(creator(ctx, client, raw))
-	}
-
-	return trace.BadParameter("updating resources of type %q is not supported", raw.Kind)
-
+	return true, nil
 }
 
-// getTextEditor returns the text editor to be used for editing the resource.
-func getTextEditor() string {
+// editor gets the text editor to be used for editing the resource
+func editor() string {
 	for _, v := range []string{"TELEPORT_EDITOR", "VISUAL", "EDITOR"} {
 		if value := os.Getenv(v); value != "" {
 			return value

@@ -147,7 +147,6 @@ func TestUnifiedResourceWatcher(t *testing.T) {
 		res,
 		cmpopts.EquateEmpty(),
 		cmpopts.IgnoreFields(types.Metadata{}, "ID", "Revision"),
-		cmpopts.IgnoreFields(header.Metadata{}, "ID", "Revision"),
 		// Ignore order.
 		cmpopts.SortSlices(func(a, b types.ResourceWithLabels) bool { return a.GetName() < b.GetName() }),
 	))

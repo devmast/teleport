@@ -40,10 +40,8 @@ import (
 	apidefaults "github.com/gravitational/teleport/api/defaults"
 	devicepb "github.com/gravitational/teleport/api/gen/proto/go/teleport/devicetrust/v1"
 	loginrulepb "github.com/gravitational/teleport/api/gen/proto/go/teleport/loginrule/v1"
-	"github.com/gravitational/teleport/api/internalutils/stream"
 	"github.com/gravitational/teleport/api/types"
 	"github.com/gravitational/teleport/api/types/discoveryconfig"
-	"github.com/gravitational/teleport/api/types/externalcloudaudit"
 	"github.com/gravitational/teleport/api/types/installers"
 	"github.com/gravitational/teleport/api/types/secreports"
 	"github.com/gravitational/teleport/lib/auth"
@@ -88,7 +86,6 @@ type ResourceCommand struct {
 	verbose bool
 
 	CreateHandlers map[ResourceKind]ResourceCreateHandler
-	UpdateHandlers map[ResourceKind]ResourceCreateHandler
 
 	// stdout allows to switch standard output source for resource command. Used in tests.
 	stdout io.Writer
@@ -117,7 +114,6 @@ func (rc *ResourceCommand) Initialize(app *kingpin.Application, config *servicec
 		types.KindClusterNetworkingConfig:  rc.createClusterNetworkingConfig,
 		types.KindClusterMaintenanceConfig: rc.createClusterMaintenanceConfig,
 		types.KindSessionRecordingConfig:   rc.createSessionRecordingConfig,
-		types.KindExternalCloudAudit:       rc.upsertExternalCloudAudit,
 		types.KindUIConfig:                 rc.createUIConfig,
 		types.KindLock:                     rc.createLock,
 		types.KindNetworkRestrictions:      rc.createNetworkRestrictions,
@@ -139,14 +135,6 @@ func (rc *ResourceCommand) Initialize(app *kingpin.Application, config *servicec
 		types.KindDiscoveryConfig:          rc.createDiscoveryConfig,
 		types.KindAuditQuery:               rc.createAuditQuery,
 		types.KindSecurityReport:           rc.createSecurityReport,
-		types.KindServerInfo:               rc.createServerInfo,
-	}
-	rc.UpdateHandlers = map[ResourceKind]ResourceCreateHandler{
-		types.KindUser:            rc.updateUser,
-		types.KindGithubConnector: rc.updateGithubConnector,
-		types.KindOIDCConnector:   rc.updateOIDCConnector,
-		types.KindSAMLConnector:   rc.updateSAMLConnector,
-		types.KindRole:            rc.updateRole,
 	}
 	rc.config = config
 
@@ -203,7 +191,7 @@ func (rc *ResourceCommand) TryRun(ctx context.Context, cmd string, client auth.C
 		err = rc.Delete(ctx, client)
 		// tctl update
 	case rc.updateCmd.FullCommand():
-		err = rc.UpdateFields(ctx, client)
+		err = rc.Update(ctx, client)
 	default:
 		return false, nil
 	}
@@ -401,20 +389,6 @@ func (rc *ResourceCommand) createGithubConnector(ctx context.Context, client aut
 	return nil
 }
 
-// updateGithubConnector updates an existing Github connector.
-func (rc *ResourceCommand) updateGithubConnector(ctx context.Context, client auth.ClientI, raw services.UnknownResource) error {
-	connector, err := services.UnmarshalGithubConnector(raw.Raw)
-	if err != nil {
-		return trace.Wrap(err)
-	}
-
-	if _, err := client.UpdateGithubConnector(ctx, connector); err != nil {
-		return trace.Wrap(err)
-	}
-	fmt.Printf("authentication connector %q has been updated\n", connector.GetName())
-	return nil
-}
-
 // createRole implements `tctl create role.yaml` command.
 func (rc *ResourceCommand) createRole(ctx context.Context, client auth.ClientI, raw services.UnknownResource) error {
 	role, err := services.UnmarshalRole(raw.Raw)
@@ -441,34 +415,10 @@ func (rc *ResourceCommand) createRole(ctx context.Context, client auth.ClientI, 
 	if roleExists && !rc.IsForced() {
 		return trace.AlreadyExists("role '%s' already exists", roleName)
 	}
-	if _, err := client.UpsertRole(ctx, role); err != nil {
+	if err := client.UpsertRole(ctx, role); err != nil {
 		return trace.Wrap(err)
 	}
 	fmt.Printf("role '%s' has been %s\n", roleName, UpsertVerb(roleExists, rc.IsForced()))
-	return nil
-}
-
-func (rc *ResourceCommand) updateRole(ctx context.Context, client auth.ClientI, raw services.UnknownResource) error {
-	role, err := services.UnmarshalRole(raw.Raw)
-	if err != nil {
-		return trace.Wrap(err)
-	}
-	err = role.CheckAndSetDefaults()
-	if err != nil {
-		return trace.Wrap(err)
-	}
-
-	if err := services.ValidateAccessPredicates(role); err != nil {
-		// check for syntax errors in predicates
-		return trace.Wrap(err)
-	}
-
-	warnAboutKubernetesResources(rc.config.Log, role)
-
-	if _, err := client.UpdateRole(ctx, role); err != nil {
-		return trace.Wrap(err)
-	}
-	fmt.Printf("role '%s' has been updated\n", role.GetName())
 	return nil
 }
 
@@ -500,7 +450,7 @@ func (rc *ResourceCommand) createUser(ctx context.Context, client auth.ClientI, 
 	}
 
 	userName := user.GetName()
-	existingUser, err := client.GetUser(ctx, userName, false)
+	existingUser, err := client.GetUser(userName, false)
 	if err != nil && !trace.IsNotFound(err) {
 		return trace.Wrap(err)
 	}
@@ -515,32 +465,17 @@ func (rc *ResourceCommand) createUser(ctx context.Context, client auth.ClientI, 
 		// This field should not be allowed to be overwritten.
 		user.SetCreatedBy(existingUser.GetCreatedBy())
 
-		if _, err := client.UpdateUser(ctx, user); err != nil {
+		if err := client.UpdateUser(ctx, user); err != nil {
 			return trace.Wrap(err)
 		}
 		fmt.Printf("user %q has been updated\n", userName)
 
 	} else {
-		if _, err := client.CreateUser(ctx, user); err != nil {
+		if err := client.CreateUser(ctx, user); err != nil {
 			return trace.Wrap(err)
 		}
 		fmt.Printf("user %q has been created\n", userName)
 	}
-
-	return nil
-}
-
-// updateUser implements `tctl create user.yaml` command.
-func (rc *ResourceCommand) updateUser(ctx context.Context, client auth.ClientI, raw services.UnknownResource) error {
-	user, err := services.UnmarshalUser(raw.Raw)
-	if err != nil {
-		return trace.Wrap(err)
-	}
-
-	if _, err := client.UpdateUser(ctx, user); err != nil {
-		return trace.Wrap(err)
-	}
-	fmt.Printf("user %q has been updated\n", user.GetName())
 
 	return nil
 }
@@ -631,22 +566,6 @@ func (rc *ResourceCommand) createSessionRecordingConfig(ctx context.Context, cli
 		return trace.Wrap(err)
 	}
 	fmt.Printf("session recording configuration has been updated\n")
-	return nil
-}
-
-// upsertExternalCloudAudit implements `tctl create external_cloud_audit` command.
-func (rc *ResourceCommand) upsertExternalCloudAudit(ctx context.Context, client auth.ClientI, raw services.UnknownResource) error {
-	config, err := services.UnmarshalExternalCloudAudit(raw.Raw)
-	if err != nil {
-		return trace.Wrap(err)
-	}
-	externalAuditClient := client.ExternalCloudAuditClient()
-	_, err = externalAuditClient.UpsertDraftExternalCloudAudit(ctx, config)
-	if err != nil {
-		return trace.Wrap(err)
-	}
-
-	fmt.Printf("external cloud audit configuration has been updated\n")
 	return nil
 }
 
@@ -852,20 +771,6 @@ func (rc *ResourceCommand) createOIDCConnector(ctx context.Context, client auth.
 	return nil
 }
 
-// updateGithubConnector updates an existing OIDC connector.
-func (rc *ResourceCommand) updateOIDCConnector(ctx context.Context, client auth.ClientI, raw services.UnknownResource) error {
-	connector, err := services.UnmarshalOIDCConnector(raw.Raw)
-	if err != nil {
-		return trace.Wrap(err)
-	}
-
-	if _, err := client.UpdateOIDCConnector(ctx, connector); err != nil {
-		return trace.Wrap(err)
-	}
-	fmt.Printf("authentication connector %q has been updated\n", connector.GetName())
-	return nil
-}
-
 func (rc *ResourceCommand) createSAMLConnector(ctx context.Context, client auth.ClientI, raw services.UnknownResource) error {
 	// Create services.SAMLConnector from raw YAML to extract the connector name.
 	conn, err := services.UnmarshalSAMLConnector(raw.Raw)
@@ -898,20 +803,6 @@ func (rc *ResourceCommand) createSAMLConnector(ctx context.Context, client auth.
 		return trace.Wrap(err)
 	}
 	fmt.Printf("authentication connector '%s' has been %s\n", connectorName, UpsertVerb(exists, rc.IsForced()))
-	return nil
-}
-
-func (rc *ResourceCommand) updateSAMLConnector(ctx context.Context, client auth.ClientI, raw services.UnknownResource) error {
-	// Create services.SAMLConnector from raw YAML to extract the connector name.
-	conn, err := services.UnmarshalSAMLConnector(raw.Raw)
-	if err != nil {
-		return trace.Wrap(err)
-	}
-
-	if _, err = client.UpdateSAMLConnector(ctx, conn); err != nil {
-		return trace.Wrap(err)
-	}
-	fmt.Printf("authentication connector '%s' has been updated\n", conn.GetName())
 	return nil
 }
 
@@ -1123,34 +1014,6 @@ func (rc *ResourceCommand) createAccessList(ctx context.Context, client auth.Cli
 	return nil
 }
 
-func (rc *ResourceCommand) createServerInfo(ctx context.Context, client auth.ClientI, raw services.UnknownResource) error {
-	si, err := services.UnmarshalServerInfo(raw.Raw)
-	if err != nil {
-		return trace.Wrap(err)
-	}
-
-	// Check if the ServerInfo already exists.
-	name := si.GetName()
-	_, err = client.GetServerInfo(ctx, name)
-	if err != nil && !trace.IsNotFound(err) {
-		return trace.Wrap(err)
-	}
-
-	exists := (err == nil)
-	if !rc.force && exists {
-		return trace.AlreadyExists("server info %q already exists", name)
-	}
-
-	err = client.UpsertServerInfo(ctx, si)
-	if err != nil {
-		return trace.Wrap(err)
-	}
-	fmt.Printf("Server info %q has been %s\n",
-		name, UpsertVerb(exists, rc.force),
-	)
-	return nil
-}
-
 // Delete deletes resource by name
 func (rc *ResourceCommand) Delete(ctx context.Context, client auth.ClientI) (err error) {
 	singletonResources := []string{
@@ -1251,18 +1114,6 @@ func (rc *ResourceCommand) Delete(ctx context.Context, client auth.ClientI) (err
 			return trace.Wrap(err)
 		}
 		fmt.Printf("session recording configuration has been reset to defaults\n")
-	case types.KindExternalCloudAudit:
-		if rc.ref.Name == types.MetaNameExternalCloudAuditCluster {
-			if err := client.ExternalCloudAuditClient().DisableClusterExternalCloudAudit(ctx); err != nil {
-				return trace.Wrap(err)
-			}
-			fmt.Printf("cluster external cloud audit configuration has been disabled\n")
-		} else {
-			if err := client.ExternalCloudAuditClient().DeleteDraftExternalCloudAudit(ctx); err != nil {
-				return trace.Wrap(err)
-			}
-			fmt.Printf("draft external cloud audit configuration has been deleted\n")
-		}
 	case types.KindLock:
 		name := rc.ref.Name
 		if rc.ref.SubKind != "" {
@@ -1504,11 +1355,7 @@ func (rc *ResourceCommand) Delete(ctx context.Context, client auth.ClientI) (err
 			return trace.Wrap(err)
 		}
 		fmt.Printf("Security report %q has been deleted\n", rc.ref.Name)
-	case types.KindServerInfo:
-		if err := client.DeleteServerInfo(ctx, rc.ref.Name); err != nil {
-			return trace.Wrap(err)
-		}
-		fmt.Printf("Server info %q has been deleted\n", rc.ref.Name)
+
 	default:
 		return trace.BadParameter("deleting resources of type %q is not supported", rc.ref.Kind)
 	}
@@ -1561,8 +1408,8 @@ func resetNetworkRestrictions(ctx context.Context, client auth.ClientI) error {
 	return trace.Wrap(client.DeleteNetworkRestrictions(ctx))
 }
 
-// UpdateFields updates select resource fields: expiry and labels
-func (rc *ResourceCommand) UpdateFields(ctx context.Context, clt auth.ClientI) error {
+// Update updates select resource fields: expiry and labels
+func (rc *ResourceCommand) Update(ctx context.Context, clt auth.ClientI) error {
 	if rc.ref.Kind == "" || rc.ref.Name == "" {
 		return trace.BadParameter("provide a full resource name to update, for example:\n$ tctl update rc/remote --set-labels=env=prod\n")
 	}
@@ -1627,13 +1474,13 @@ func (rc *ResourceCommand) getCollection(ctx context.Context, client auth.Client
 	switch rc.ref.Kind {
 	case types.KindUser:
 		if rc.ref.Name == "" {
-			users, err := client.GetUsers(ctx, rc.withSecrets)
+			users, err := client.GetUsers(rc.withSecrets)
 			if err != nil {
 				return nil, trace.Wrap(err)
 			}
 			return &userCollection{users: users}, nil
 		}
-		user, err := client.GetUser(ctx, rc.ref.Name, rc.withSecrets)
+		user, err := client.GetUser(rc.ref.Name, rc.withSecrets)
 		if err != nil {
 			return nil, trace.Wrap(err)
 		}
@@ -2225,43 +2072,7 @@ func (rc *ResourceCommand) getCollection(ctx context.Context, client auth.Client
 			}
 		}
 		return &userGroupCollection{userGroups: resources}, nil
-	case types.KindExternalCloudAudit:
-		out := []*externalcloudaudit.ExternalCloudAudit{}
-		name := rc.ref.Name
-		switch name {
-		case "":
-			cluster, err := client.ExternalCloudAuditClient().GetClusterExternalCloudAudit(ctx)
-			if err != nil {
-				if !trace.IsNotFound(err) {
-					return nil, trace.Wrap(err)
-				}
-			} else {
-				out = append(out, cluster)
-			}
-			draft, err := client.ExternalCloudAuditClient().GetDraftExternalCloudAudit(ctx)
-			if err != nil {
-				if !trace.IsNotFound(err) {
-					return nil, trace.Wrap(err)
-				}
-			} else {
-				out = append(out, draft)
-			}
-			return &externalCloudAuditCollection{externalCloudAudits: out}, nil
-		case types.MetaNameExternalCloudAuditCluster:
-			cluster, err := client.ExternalCloudAuditClient().GetClusterExternalCloudAudit(ctx)
-			if err != nil {
-				return nil, trace.Wrap(err)
-			}
-			return &externalCloudAuditCollection{externalCloudAudits: []*externalcloudaudit.ExternalCloudAudit{cluster}}, nil
-		case types.MetaNameExternalCloudAuditDraft:
-			draft, err := client.ExternalCloudAuditClient().GetDraftExternalCloudAudit(ctx)
-			if err != nil {
-				return nil, trace.Wrap(err)
-			}
-			return &externalCloudAuditCollection{externalCloudAudits: []*externalcloudaudit.ExternalCloudAudit{draft}}, nil
-		default:
-			return nil, trace.BadParameter("unsupported resource name for external_cloud_audit, valid for get are: '', %q, %q", types.MetaNameExternalCloudAuditDraft, types.MetaNameExternalCloudAuditCluster)
-		}
+
 	case types.KindIntegration:
 		if rc.ref.Name != "" {
 			ig, err := client.GetIntegration(ctx, rc.ref.Name)
@@ -2341,19 +2152,6 @@ func (rc *ResourceCommand) getCollection(ctx context.Context, client auth.Client
 			return nil, trace.Wrap(err)
 		}
 		return &securityReportCollection{items: resources}, nil
-	case types.KindServerInfo:
-		if rc.ref.Name != "" {
-			si, err := client.GetServerInfo(ctx, rc.ref.Name)
-			if err != nil {
-				return nil, trace.Wrap(err)
-			}
-			return &serverInfoCollection{serverInfos: []types.ServerInfo{si}}, nil
-		}
-		serverInfos, err := stream.Collect(client.GetServerInfos(ctx))
-		if err != nil {
-			return nil, trace.Wrap(err)
-		}
-		return &serverInfoCollection{serverInfos: serverInfos}, nil
 	}
 	return nil, trace.BadParameter("getting %q is not supported", rc.ref.String())
 }

@@ -18,7 +18,6 @@ package auth
 
 import (
 	"context"
-	"maps"
 	"time"
 
 	"github.com/gravitational/trace"
@@ -45,7 +44,7 @@ func (a *Server) ReconcileServerInfos(ctx context.Context) error {
 
 		for moreNodes := true; moreNodes; {
 			nodes, moreNodes = stream.Take(nodeStream, batchSize)
-			updates, err := a.setLabelsOnNodes(ctx, nodes)
+			updates, err := a.setCloudLabelsOnNodes(ctx, nodes)
 			if err != nil {
 				return trace.Wrap(err)
 			}
@@ -54,7 +53,7 @@ func (a *Server) ReconcileServerInfos(ctx context.Context) error {
 			select {
 			case <-clock.After(timeBetweenBatches):
 			case <-ctx.Done():
-				return nil
+				return trace.Wrap(ctx.Err())
 			}
 		}
 
@@ -66,62 +65,37 @@ func (a *Server) ReconcileServerInfos(ctx context.Context) error {
 		select {
 		case <-clock.After(timeBetweenReconciliationLoops):
 		case <-ctx.Done():
-			return nil
+			return trace.Wrap(ctx.Err())
 		}
 	}
 }
 
-// getServerInfoNames gets the names of ServerInfos that could exist for a
-// node. The list of names returned are ordered such that later ServerInfos
-// override earlier ones on conflicting labels.
-func getServerInfoNames(node types.Server) []string {
-	var names []string
-	if meta := node.GetCloudMetadata(); meta != nil && meta.AWS != nil {
-		names = append(names, types.ServerInfoNameFromAWS(meta.AWS.AccountID, meta.AWS.InstanceID))
-	}
-	// ServerInfos matched by node name should override any ServerInfos created
-	// by the discovery service.
-	return append(names, types.ServerInfoNameFromNodeName(node.GetName()))
-}
-
-func (a *Server) setLabelsOnNodes(ctx context.Context, nodes []types.Server) (failedUpdates int, err error) {
+func (a *Server) setCloudLabelsOnNodes(ctx context.Context, nodes []types.Server) (failedUpdates int, err error) {
 	for _, node := range nodes {
-		// Get the server infos that match this node.
-		serverInfoNames := getServerInfoNames(node)
-		serverInfos := make([]types.ServerInfo, 0, len(serverInfoNames))
-		for _, name := range serverInfoNames {
-			si, err := a.GetServerInfo(ctx, name)
+		meta := node.GetCloudMetadata()
+		if meta != nil && meta.AWS != nil {
+			si, err := a.GetServerInfo(ctx, meta.AWS.GetServerInfoName())
 			if err == nil {
-				serverInfos = append(serverInfos, si)
+				err := a.updateLabelsOnNode(ctx, node, si)
+				// Didn't find control stream for node, save count for logging.
+				if trace.IsNotFound(err) {
+					failedUpdates++
+				} else if err != nil {
+					return failedUpdates, trace.Wrap(err)
+				}
 			} else if !trace.IsNotFound(err) {
 				return failedUpdates, trace.Wrap(err)
 			}
-		}
-		if len(serverInfos) == 0 {
-			continue
-		}
-
-		// Didn't find control stream for node, save count for logging.
-		if err := a.updateLabelsOnNode(ctx, node, serverInfos); trace.IsNotFound(err) {
-			failedUpdates++
-		} else if err != nil {
-			return failedUpdates, trace.Wrap(err)
 		}
 	}
 	return failedUpdates, nil
 }
 
-func (a *Server) updateLabelsOnNode(ctx context.Context, node types.Server, serverInfos []types.ServerInfo) error {
-	// Merge labels from server infos. Later label sets should override earlier
-	// ones if they conflict.
-	newLabels := make(map[string]string)
-	for _, si := range serverInfos {
-		maps.Copy(newLabels, si.GetNewLabels())
-	}
+func (a *Server) updateLabelsOnNode(ctx context.Context, node types.Server, si types.ServerInfo) error {
 	err := a.UpdateLabels(ctx, proto.InventoryUpdateLabelsRequest{
 		ServerID: node.GetName(),
 		Kind:     proto.LabelUpdateKind_SSHServerCloudLabels,
-		Labels:   newLabels,
+		Labels:   si.GetStaticLabels(),
 	})
 	return trace.Wrap(err)
 }

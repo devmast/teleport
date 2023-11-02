@@ -19,7 +19,11 @@ import { matchPath } from 'react-router';
 import { useStore, Store } from 'shared/libs/stores';
 
 import { IAppContext } from 'teleterm/ui/types';
-import { ClusterUri, DocumentUri, routing } from 'teleterm/ui/uri';
+import { ClusterUri, DocumentUri, KubeUri, routing } from 'teleterm/ui/uri';
+import {
+  connectToKube,
+  DocumentOrigin,
+} from 'teleterm/ui/services/workspacesService';
 
 import type * as tsh from 'teleterm/services/tshd/types';
 
@@ -69,6 +73,10 @@ class ClusterContext extends Store<State> {
     this.appCtx.commandLauncher.executeCommand('cluster-connect', {
       clusterUri: rootCluster?.uri,
     });
+  };
+
+  connectKube = (kubeUri: KubeUri, params: { origin: DocumentOrigin }) => {
+    connectToKube(this.appCtx, { uri: kubeUri }, { origin: params.origin });
   };
 
   refresh = () => {

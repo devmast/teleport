@@ -62,7 +62,7 @@ func (a *UserProvisioner) Activate(ctx context.Context, sessionCtx *Session) (fu
 				"administrator")
 	}
 
-	if sessionCtx.Database.GetAdminUser().Name == "" {
+	if sessionCtx.Database.GetAdminUser() == "" {
 		return nil, trace.BadParameter(
 			"your Teleport role requires automatic database user provisioning " +
 				"but this database doesn't have admin user configured, contact " +

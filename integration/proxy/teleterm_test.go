@@ -98,7 +98,7 @@ func testDBGatewayCertRenewal(t *testing.T, pack *dbhelpers.DatabasePack, albAdd
 	)
 }
 
-type testGatewayConnectionFunc func(*testing.T, *daemon.Service, gateway.Gateway)
+type testGatewayConnectionFunc func(*testing.T, gateway.Gateway)
 
 func testGatewayCertRenewal(t *testing.T, inst *helpers.TeleInstance, username, albAddr string, params daemon.CreateGatewayParams, testConnection testGatewayConnectionFunc) {
 	t.Helper()
@@ -125,7 +125,6 @@ func testGatewayCertRenewal(t *testing.T, inst *helpers.TeleInstance, username, 
 	require.NoError(t, err)
 
 	daemonService, err := daemon.New(daemon.Config{
-		Clock:   fakeClock,
 		Storage: storage,
 		CreateTshdEventsClientCredsFunc: func() (grpc.DialOption, error) {
 			return grpc.WithTransportCredentials(insecure.NewCredentials()), nil
@@ -148,7 +147,7 @@ func testGatewayCertRenewal(t *testing.T, inst *helpers.TeleInstance, username, 
 	gateway, err := daemonService.CreateGateway(context.Background(), params)
 	require.NoError(t, err, trace.DebugReport(err))
 
-	testConnection(t, daemonService, gateway)
+	testConnection(t, gateway)
 
 	// Advance the fake clock to simulate the db cert expiry inside the middleware.
 	fakeClock.Advance(time.Hour * 48)
@@ -168,7 +167,7 @@ func testGatewayCertRenewal(t *testing.T, inst *helpers.TeleInstance, username, 
 	// and then it will attempt to reissue the user cert using an expired user cert.
 	// The mocked tshdEventsClient will issue a valid user cert, save it to disk, and the middleware
 	// will let the connection through.
-	testConnection(t, daemonService, gateway)
+	testConnection(t, gateway)
 
 	require.Equal(t, 1, tshdEventsService.callCounts["Relogin"],
 		"Unexpected number of calls to TSHDEventsClient.Relogin")
@@ -340,7 +339,7 @@ func testKubeGatewayCertRenewal(t *testing.T, suite *Suite, albAddr string, kube
 		teleportCluster = kubeURI.GetLeafClusterName()
 	}
 
-	testKubeConnection := func(t *testing.T, daemonService *daemon.Service, gw gateway.Gateway) {
+	testKubeConnection := func(t *testing.T, gw gateway.Gateway) {
 		t.Helper()
 
 		clientOnce.Do(func() {
@@ -348,7 +347,7 @@ func testKubeGatewayCertRenewal(t *testing.T, suite *Suite, albAddr string, kube
 			require.NoError(t, err)
 
 			kubeconfigPath := kubeGateway.KubeconfigPath()
-			checkKubeconfigPathInCommandEnv(t, daemonService, gw, kubeconfigPath)
+			checkKubeconfigPathInCommandEnv(t, gw, kubeconfigPath)
 
 			client = kubeClientForLocalProxy(t, kubeconfigPath, teleportCluster, kubeCluster)
 		})
@@ -368,10 +367,10 @@ func testKubeGatewayCertRenewal(t *testing.T, suite *Suite, albAddr string, kube
 	)
 }
 
-func checkKubeconfigPathInCommandEnv(t *testing.T, daemonService *daemon.Service, gw gateway.Gateway, wantKubeconfigPath string) {
+func checkKubeconfigPathInCommandEnv(t *testing.T, gw gateway.Gateway, wantKubeconfigPath string) {
 	t.Helper()
 
-	cmd, err := daemonService.GetGatewayCLICommand(gw)
+	cmd, err := gw.CLICommand()
 	require.NoError(t, err)
 	require.Equal(t, cmd.Env, []string{"KUBECONFIG=" + wantKubeconfigPath})
 }

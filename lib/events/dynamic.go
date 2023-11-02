@@ -74,7 +74,9 @@ func FromEventFields(fields EventFields) (events.AuditEvent, error) {
 	case UserCreateEvent:
 		e = &events.UserCreate{}
 	case UserUpdatedEvent:
-		e = &events.UserUpdate{}
+		// note: user.update is a custom code applied on top of the same data as the user.create event
+		//       and they are thus functionally identical. There exists no direct gRPC version of user.update.
+		e = &events.UserCreate{}
 	case UserPasswordChangeEvent:
 		e = &events.UserPasswordChange{}
 	case AccessRequestCreateEvent:
@@ -119,8 +121,6 @@ func FromEventFields(fields EventFields) (events.AuditEvent, error) {
 		e = &events.SessionNetwork{}
 	case RoleCreatedEvent:
 		e = &events.RoleCreate{}
-	case RoleUpdatedEvent:
-		e = &events.RoleUpdate{}
 	case RoleDeletedEvent:
 		e = &events.RoleDelete{}
 	case TrustedClusterCreateEvent:
@@ -135,20 +135,14 @@ func FromEventFields(fields EventFields) (events.AuditEvent, error) {
 		e = &events.ProvisionTokenCreate{}
 	case GithubConnectorCreatedEvent:
 		e = &events.GithubConnectorCreate{}
-	case GithubConnectorUpdatedEvent:
-		e = &events.GithubConnectorUpdate{}
 	case GithubConnectorDeletedEvent:
 		e = &events.GithubConnectorDelete{}
 	case OIDCConnectorCreatedEvent:
 		e = &events.OIDCConnectorCreate{}
-	case OIDCConnectorUpdatedEvent:
-		e = &events.OIDCConnectorUpdate{}
 	case OIDCConnectorDeletedEvent:
 		e = &events.OIDCConnectorDelete{}
 	case SAMLConnectorCreatedEvent:
 		e = &events.SAMLConnectorCreate{}
-	case SAMLConnectorUpdatedEvent:
-		e = &events.SAMLConnectorUpdate{}
 	case SAMLConnectorDeletedEvent:
 		e = &events.SAMLConnectorDelete{}
 	case SessionRejectedEvent:

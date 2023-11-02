@@ -36,6 +36,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/gravitational/trace"
+	"github.com/gravitational/trace/trail"
 	"github.com/julienschmidt/httprouter"
 	"github.com/sirupsen/logrus"
 
@@ -45,7 +46,6 @@ import (
 	"github.com/gravitational/teleport/api/utils/keys"
 	"github.com/gravitational/teleport/lib/auth"
 	wantypes "github.com/gravitational/teleport/lib/auth/webauthntypes"
-	"github.com/gravitational/teleport/lib/authz"
 	"github.com/gravitational/teleport/lib/client"
 	"github.com/gravitational/teleport/lib/defaults"
 	"github.com/gravitational/teleport/lib/httplib"
@@ -174,7 +174,7 @@ func (h *Handler) createDesktopConnection(
 		return sendTDPError(err)
 	}
 
-	clientSrcAddr, clientDstAddr := authz.ClientAddrsFromContext(r.Context())
+	clientSrcAddr, clientDstAddr := utils.ClientAddrFromContext(r.Context())
 
 	c := &connector{
 		log:           log,
@@ -311,57 +311,88 @@ func (h *Handler) performMFACeremony(ctx context.Context, authClient auth.Client
 		span.End()
 	}()
 
-	promptMFA := func(ctx context.Context, chal *proto.MFAAuthenticateChallenge) (*proto.MFAAuthenticateResponse, error) {
-		codec := tdpMFACodec{}
+	stream, err := authClient.GenerateUserSingleUseCerts(ctx)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+	defer func() {
+		stream.CloseSend()
+		stream.Recv()
+	}()
 
-		// Send the challenge over the socket.
-		msg, err := codec.encode(
-			&client.MFAAuthenticateChallenge{
-				WebauthnChallenge: wantypes.CredentialAssertionFromProto(chal.WebauthnChallenge),
+	if err := stream.Send(
+		&proto.UserSingleUseCertsRequest{
+			Request: &proto.UserSingleUseCertsRequest_Init{
+				Init: certsReq,
 			},
-			defaults.WebsocketWebauthnChallenge,
-		)
-		if err != nil {
-			return nil, trace.Wrap(err)
-		}
-
-		if err := ws.WriteMessage(websocket.BinaryMessage, msg); err != nil {
-			return nil, trace.Wrap(err)
-		}
-
-		span.AddEvent("waiting for user to complete mfa ceremony")
-		ty, buf, err := ws.ReadMessage()
-		if err != nil {
-			return nil, trace.Wrap(err)
-		}
-
-		if ty != websocket.BinaryMessage {
-			return nil, trace.BadParameter("received unexpected web socket message type %d", ty)
-		}
-
-		assertion, err := codec.decodeResponse(buf, defaults.WebsocketWebauthnChallenge)
-		if err != nil {
-			return nil, trace.Wrap(err)
-		}
-		span.AddEvent("mfa ceremony completed")
-
-		return assertion, nil
+		}); err != nil {
+		return nil, trail.FromGRPC(err)
 	}
 
-	_, newCerts, err := client.PerformMFACeremony(ctx, client.PerformMFACeremonyParams{
-		CurrentAuthClient: nil, // Only RootAuthClient is used.
-		RootAuthClient:    authClient,
-		PromptMFA:         promptMFA,
-		MFAAgainstRoot:    true,
-		MFARequiredReq:    nil, // No need to verify.
-		CertsReq:          certsReq,
-		Key:               nil, // We just want the certs.
-	})
+	challengeResp, err := stream.Recv()
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
 
-	return newCerts.TLS, nil
+	c := challengeResp.GetMFAChallenge()
+	if c == nil {
+		return nil, trace.BadParameter("server sent a %T on GenerateUserSingleUseCerts, expected MFAChallenge", challengeResp.Response)
+	}
+
+	codec := tdpMFACodec{}
+
+	// Send the challenge over the socket.
+	msg, err := codec.encode(
+		&client.MFAAuthenticateChallenge{
+			WebauthnChallenge: wantypes.CredentialAssertionFromProto(c.WebauthnChallenge),
+		},
+		defaults.WebsocketWebauthnChallenge,
+	)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	if err := ws.WriteMessage(websocket.BinaryMessage, msg); err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	span.AddEvent("waiting for user to complete mfa ceremony")
+	ty, buf, err := ws.ReadMessage()
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
+	if ty != websocket.BinaryMessage {
+		return nil, trace.BadParameter("received unexpected web socket message type %d", ty)
+	}
+
+	assertion, err := codec.decodeResponse(buf, defaults.WebsocketWebauthnChallenge)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+	span.AddEvent("mfa ceremony completed")
+
+	err = stream.Send(&proto.UserSingleUseCertsRequest{Request: &proto.UserSingleUseCertsRequest_MFAResponse{MFAResponse: assertion}})
+	if err != nil {
+		return nil, trail.FromGRPC(err)
+	}
+
+	userCertResp, err := stream.Recv()
+	if err != nil {
+		return nil, trail.FromGRPC(err)
+	}
+
+	certResp := userCertResp.GetCert()
+	if certResp == nil {
+		return nil, trace.BadParameter("server sent a %T on GenerateUserSingleUseCerts, expected SingleUseUserCert", userCertResp.Response)
+	}
+
+	switch crt := certResp.Cert.(type) {
+	case *proto.SingleUseUserCert_TLS:
+		return crt.TLS, nil
+	default:
+		return nil, trace.BadParameter("server sent a %T SingleUseUserCert in response", certResp.Cert)
+	}
 }
 
 type connector struct {

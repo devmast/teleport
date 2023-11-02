@@ -15,9 +15,7 @@
  */
 
 import React from 'react';
-import { act } from '@testing-library/react';
 import { render, screen } from 'design/utils/testing';
-import { mockIntersectionObserver } from 'jsdom-testing-mocks';
 
 import { MockAppContext } from 'teleterm/ui/fixtures/mocks';
 import { MockAppContextProvider } from 'teleterm/ui/fixtures/MockAppContextProvider';
@@ -31,9 +29,7 @@ import { ConnectMyComputerContextProvider } from 'teleterm/ui/ConnectMyComputer'
 
 import { ResourcesContextProvider } from './resourcesContext';
 
-import DocumentCluster from './DocumentCluster';
-
-const mio = mockIntersectionObserver();
+import DocumentCluster from '.';
 
 it('displays a button for Connect My Computer in the empty state if the user can use Connect My Computer', async () => {
   const doc = {
@@ -78,12 +74,12 @@ it('displays a button for Connect My Computer in the empty state if the user can
   });
 
   const emptyResponse = {
-    resources: [],
+    agentsList: [],
     totalCount: 0,
-    nextKey: '',
+    startKey: '',
   };
   jest
-    .spyOn(appContext.resourcesService, 'listUnifiedResources')
+    .spyOn(appContext.resourcesService, 'fetchServers')
     .mockResolvedValue(emptyResponse);
 
   render(
@@ -97,8 +93,6 @@ it('displays a button for Connect My Computer in the empty state if the user can
       </MockWorkspaceContextProvider>
     </MockAppContextProvider>
   );
-
-  act(mio.enterAll);
 
   await expect(
     screen.findByRole('button', { name: 'Connect My Computer' })
@@ -148,12 +142,12 @@ it('does not display a button for Connect My Computer in the empty state if the 
   });
 
   const emptyResponse = {
-    resources: [],
+    agentsList: [],
     totalCount: 0,
-    nextKey: '',
+    startKey: '',
   };
   jest
-    .spyOn(appContext.resourcesService, 'listUnifiedResources')
+    .spyOn(appContext.resourcesService, 'fetchServers')
     .mockResolvedValue(emptyResponse);
 
   render(
@@ -168,10 +162,8 @@ it('does not display a button for Connect My Computer in the empty state if the 
     </MockAppContextProvider>
   );
 
-  act(mio.enterAll);
-
   await expect(
-    screen.findByText('No Resources Found')
+    screen.findByText('No servers found.')
   ).resolves.toBeInTheDocument();
 
   expect(

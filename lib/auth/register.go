@@ -205,8 +205,7 @@ func Register(params RegisterParams) (*proto.Certs, error) {
 	}
 
 	// add EC2 Identity Document to params if required for given join method
-	switch params.JoinMethod {
-	case types.JoinMethodEC2:
+	if params.JoinMethod == types.JoinMethodEC2 {
 		if !aws.IsEC2NodeID(params.ID.HostUUID) {
 			return nil, trace.BadParameter(
 				`Host ID %q is not valid when using the EC2 join method, `+
@@ -218,27 +217,27 @@ func Register(params RegisterParams) (*proto.Certs, error) {
 		if err != nil {
 			return nil, trace.Wrap(err)
 		}
-	case types.JoinMethodGitHub:
+	} else if params.JoinMethod == types.JoinMethodGitHub {
 		params.IDToken, err = githubactions.NewIDTokenSource().GetIDToken(ctx)
 		if err != nil {
 			return nil, trace.Wrap(err)
 		}
-	case types.JoinMethodGitLab:
+	} else if params.JoinMethod == types.JoinMethodGitLab {
 		params.IDToken, err = gitlab.NewIDTokenSource(os.Getenv).GetIDToken()
 		if err != nil {
 			return nil, trace.Wrap(err)
 		}
-	case types.JoinMethodCircleCI:
+	} else if params.JoinMethod == types.JoinMethodCircleCI {
 		params.IDToken, err = circleci.GetIDToken(os.Getenv)
 		if err != nil {
 			return nil, trace.Wrap(err)
 		}
-	case types.JoinMethodKubernetes:
+	} else if params.JoinMethod == types.JoinMethodKubernetes {
 		params.IDToken, err = kubernetestoken.GetIDToken(os.Getenv, os.ReadFile)
 		if err != nil {
 			return nil, trace.Wrap(err)
 		}
-	case types.JoinMethodGCP:
+	} else if params.JoinMethod == types.JoinMethodGCP {
 		params.IDToken, err = gcp.GetIDToken(ctx)
 		if err != nil {
 			return nil, trace.Wrap(err)

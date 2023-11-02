@@ -16,7 +16,6 @@ package daemon
 
 import (
 	"context"
-	"os/exec"
 	"sync"
 	"time"
 
@@ -25,16 +24,13 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/gravitational/teleport/api/client/proto"
 	"github.com/gravitational/teleport/api/types"
 	api "github.com/gravitational/teleport/gen/proto/go/teleport/lib/teleterm/v1"
 	"github.com/gravitational/teleport/lib/client"
 	"github.com/gravitational/teleport/lib/teleterm/api/uri"
 	"github.com/gravitational/teleport/lib/teleterm/clusters"
-	"github.com/gravitational/teleport/lib/teleterm/cmd"
 	"github.com/gravitational/teleport/lib/teleterm/gateway"
 	"github.com/gravitational/teleport/lib/teleterm/services/connectmycomputer"
-	"github.com/gravitational/teleport/lib/teleterm/services/unifiedresources"
 	usagereporter "github.com/gravitational/teleport/lib/usagereporter/daemon"
 )
 
@@ -282,11 +278,17 @@ func (s *Service) createGateway(ctx context.Context, params CreateGatewayParams)
 		return gateway, nil
 	}
 
+	cliCommandProvider, err := s.getGatewayCLICommandProvider(targetURI)
+	if err != nil {
+		return nil, trace.Wrap(err)
+	}
+
 	clusterCreateGatewayParams := clusters.CreateGatewayParams{
 		TargetURI:             targetURI,
 		TargetUser:            params.TargetUser,
 		TargetSubresourceName: params.TargetSubresourceName,
 		LocalPort:             params.LocalPort,
+		CLICommandProvider:    cliCommandProvider,
 		OnExpiredCert:         s.reissueGatewayCerts,
 		KubeconfigsDir:        s.cfg.KubeconfigsDir,
 	}
@@ -305,6 +307,17 @@ func (s *Service) createGateway(ctx context.Context, params CreateGatewayParams)
 	s.gateways[gateway.URI().String()] = gateway
 
 	return gateway, nil
+}
+
+func (s *Service) getGatewayCLICommandProvider(targetURI uri.ResourceURI) (gateway.CLICommandProvider, error) {
+	switch {
+	case targetURI.IsDB():
+		return s.cfg.DBCLICommandProvider, nil
+	case targetURI.IsKube():
+		return s.cfg.KubeCLICommandProvider, nil
+	default:
+		return nil, trace.NotImplemented("gateway not supported for %v", targetURI)
+	}
 }
 
 // reissueGatewayCerts tries to reissue gateway certs.
@@ -409,28 +422,6 @@ func (s *Service) ListGateways() []gateway.Gateway {
 	}
 
 	return gws
-}
-
-// GetGatewayCLICommand creates the CLI command used for the provided gateway.
-func (s *Service) GetGatewayCLICommand(gateway gateway.Gateway) (*exec.Cmd, error) {
-	targetURI := gateway.TargetURI()
-	switch {
-	case targetURI.IsDB():
-		cluster, _, err := s.cfg.Storage.GetByResourceURI(targetURI)
-		if err != nil {
-			return nil, trace.Wrap(err)
-		}
-
-		cmd, err := cmd.NewDBCLICommand(cluster, gateway)
-		return cmd, trace.Wrap(err)
-
-	case targetURI.IsKube():
-		cmd, err := cmd.NewKubeCLICommand(gateway)
-		return cmd, trace.Wrap(err)
-
-	default:
-		return nil, trace.NotImplemented("gateway not supported for %v", targetURI)
-	}
 }
 
 // SetGatewayTargetSubresourceName updates the TargetSubresourceName field of a gateway stored in
@@ -884,39 +875,6 @@ func (s *Service) WaitForConnectMyComputerNodeJoin(ctx context.Context, rootClus
 	})
 
 	return server, trace.Wrap(err)
-}
-
-// ListUnifiedResources returns resources for the given cluster and search params.
-func (s *Service) ListUnifiedResources(ctx context.Context, clusterURI uri.ResourceURI, req *proto.ListUnifiedResourcesRequest) (*unifiedresources.ListResponse, error) {
-	cluster, clusterClient, err := s.ResolveClusterURI(clusterURI)
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-
-	var resources *unifiedresources.ListResponse
-
-	err = clusters.AddMetadataToRetryableError(ctx, func() error {
-		proxyClient, err := clusterClient.ConnectToProxy(ctx)
-		if err != nil {
-			return trace.Wrap(err)
-		}
-		defer proxyClient.Close()
-
-		authClient, err := proxyClient.ConnectToCluster(ctx, clusterClient.SiteName)
-		if err != nil {
-			return trace.Wrap(err)
-		}
-		defer authClient.Close()
-
-		resources, err = unifiedresources.List(ctx, cluster, authClient, req)
-		if err != nil {
-			return trace.Wrap(err)
-		}
-
-		return nil
-	})
-
-	return resources, trace.Wrap(err)
 }
 
 func (s *Service) shouldReuseGateway(targetURI uri.ResourceURI) (gateway.Gateway, bool) {

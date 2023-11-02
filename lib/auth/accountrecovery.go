@@ -13,7 +13,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package auth
 
 import (
@@ -104,7 +103,7 @@ func (a *Server) StartAccountRecovery(ctx context.Context, req *proto.StartAccou
 // After MaxAccountRecoveryAttempts, user is temporarily locked from further attempts at recovering and also
 // locked from logging in. Modeled after existing function WithUserLock.
 func (a *Server) verifyCodeWithRecoveryLock(ctx context.Context, username string, recoveryCode []byte) error {
-	user, err := a.Services.GetUser(ctx, username, false)
+	user, err := a.Services.GetUser(username, false)
 	switch {
 	case trace.IsNotFound(err):
 		// If user is not found, still authenticate. It should always return an error.
@@ -141,8 +140,7 @@ func (a *Server) verifyCodeWithRecoveryLock(ctx context.Context, username string
 
 	// Temp lock both user login and recovery attempts.
 	user.SetRecoveryAttemptLockExpires(lockedUntil, accountLockedMsg)
-	_, err = a.UpsertUser(ctx, user)
-	if err != nil {
+	if err := a.UpsertUser(user); err != nil {
 		log.Error(trace.DebugReport(err))
 		return trace.Wrap(verifyCodeErr)
 	}
@@ -292,7 +290,7 @@ func (a *Server) VerifyAccountRecovery(ctx context.Context, req *proto.VerifyAcc
 func (a *Server) verifyAuthnWithRecoveryLock(ctx context.Context, startToken types.UserToken, authenticateFn func() error) error {
 	// Determine user exists first since an existence of token
 	// does not guarantee the user defined in token exists anymore.
-	user, err := a.Services.GetUser(ctx, startToken.GetUser(), false)
+	user, err := a.Services.GetUser(startToken.GetUser(), false)
 	if err != nil {
 		log.Error(trace.DebugReport(err))
 		return trace.AccessDenied(verifyRecoveryGenericErrMsg)
@@ -340,8 +338,7 @@ func (a *Server) verifyAuthnWithRecoveryLock(ctx context.Context, startToken typ
 
 	// Lock the user from logging in.
 	user.SetLocked(lockedUntil, accountLockedMsg)
-	_, err = a.UpsertUser(ctx, user)
-	if err != nil {
+	if err := a.UpsertUser(user); err != nil {
 		log.Error(trace.DebugReport(err))
 		return trace.AccessDenied(verifyRecoveryBadAuthnErrMsg)
 	}
@@ -434,7 +431,7 @@ func (a *Server) CompleteAccountRecovery(ctx context.Context, req *proto.Complet
 	}
 
 	// Check and remove user locks so user can immediately sign in after finishing recovering.
-	user, err := a.Services.GetUser(ctx, approvedToken.GetUser(), false /* without secrets */)
+	user, err := a.Services.GetUser(approvedToken.GetUser(), false /* without secrets */)
 	if err != nil {
 		log.Error(trace.DebugReport(err))
 		return trace.AccessDenied(completeRecoveryGenericErrMsg)
@@ -442,8 +439,7 @@ func (a *Server) CompleteAccountRecovery(ctx context.Context, req *proto.Complet
 
 	if user.GetStatus().IsLocked {
 		user.ResetLocks()
-		_, err = a.UpsertUser(ctx, user)
-		if err != nil {
+		if err := a.UpsertUser(user); err != nil {
 			log.Error(trace.DebugReport(err))
 			return trace.AccessDenied(completeRecoveryGenericErrMsg)
 		}

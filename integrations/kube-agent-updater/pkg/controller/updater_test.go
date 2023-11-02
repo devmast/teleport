@@ -21,7 +21,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/distribution/reference"
+	"github.com/docker/distribution/reference"
 	"github.com/gravitational/trace"
 	"github.com/opencontainers/go-digest"
 	"github.com/stretchr/testify/require"

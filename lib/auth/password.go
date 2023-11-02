@@ -93,8 +93,8 @@ func (a *Server) ChangeUserAuthentication(ctx context.Context, req *proto.Change
 // ResetPassword securely generates a new random password and assigns it to user.
 // This method is used to invalidate existing user password during password
 // reset process.
-func (a *Server) ResetPassword(ctx context.Context, username string) (string, error) {
-	user, err := a.GetUser(ctx, username, false)
+func (a *Server) ResetPassword(username string) (string, error) {
+	user, err := a.GetUser(username, false)
 	if err != nil {
 		return "", trace.Wrap(err)
 	}
@@ -325,7 +325,7 @@ func (a *Server) changeUserAuthentication(ctx context.Context, req *proto.Change
 		}
 	}
 
-	user, err := a.GetUser(ctx, username, false)
+	user, err := a.GetUser(username, false)
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}

@@ -3386,7 +3386,6 @@ func TestApplyTraits(t *testing.T) {
 // TestExtractFrom makes sure roles and traits are extracted from SSH and TLS
 // certificates not services.User.
 func TestExtractFrom(t *testing.T) {
-	ctx := context.Background()
 	origRoles := []string{"admin"}
 	origTraits := wrappers.Traits(map[string][]string{
 		"login": {"foo"},
@@ -3410,7 +3409,7 @@ func TestExtractFrom(t *testing.T) {
 	require.Equal(t, roles, origRoles)
 	require.Equal(t, traits, origTraits)
 
-	roles, traits, err = ExtractFromIdentity(ctx, &userGetter{
+	roles, traits, err = ExtractFromIdentity(&userGetter{
 		roles:  origRoles,
 		traits: origTraits,
 	}, *identity)
@@ -3426,7 +3425,7 @@ func TestExtractFrom(t *testing.T) {
 	require.Equal(t, roles, origRoles)
 	require.Equal(t, traits, origTraits)
 
-	roles, traits, err = ExtractFromIdentity(ctx, &userGetter{
+	roles, traits, err = ExtractFromIdentity(&userGetter{
 		roles:  origRoles,
 		traits: origTraits,
 	}, *identity)
@@ -6203,7 +6202,7 @@ type userGetter struct {
 	traits map[string][]string
 }
 
-func (f *userGetter) GetUser(ctx context.Context, name string, _ bool) (types.User, error) {
+func (f *userGetter) GetUser(name string, _ bool) (types.User, error) {
 	user, err := types.NewUser(name)
 	if err != nil {
 		return nil, trace.Wrap(err)

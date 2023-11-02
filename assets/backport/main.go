@@ -17,13 +17,11 @@ limitations under the License.
 package main
 
 import (
-	"bytes"
 	"context"
 	"flag"
 	"fmt"
 	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -110,23 +108,10 @@ func getGithubToken() (string, error) {
 	if err = yaml.Unmarshal(yamlFile, config); err != nil {
 		return "", trace.Wrap(err)
 	}
-	if config.Host.Token != "" {
-		return config.Host.Token, nil
+	if config.Host.Token == "" {
+		return "", trace.BadParameter("missing GitHub token.")
 	}
-
-	stdout := &bytes.Buffer{}
-	stderr := &bytes.Buffer{}
-	c := exec.Command("gh", "auth", "token")
-	c.Stdout = stdout
-	c.Stderr = stderr
-	if err := c.Run(); err != nil {
-		return "", trace.Errorf("gh: %s \nPlease login using \"gh auth login\"", stderr.String())
-	}
-	if stdout.Len() > 0 {
-		return strings.TrimSpace(stdout.String()), nil
-	}
-
-	return "", trace.BadParameter("missing GitHub token.")
+	return config.Host.Token, nil
 }
 
 // parseFlags parses flags and sets

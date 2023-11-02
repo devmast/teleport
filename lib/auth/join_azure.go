@@ -348,7 +348,7 @@ func (a *Server) RegisterUsingAzureMethod(ctx context.Context, challengeResponse
 		return nil, trace.Wrap(err)
 	}
 
-	clientAddr, err := authz.ClientSrcAddrFromContext(ctx)
+	clientAddr, err := authz.ClientAddrFromContext(ctx)
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}

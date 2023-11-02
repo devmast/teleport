@@ -15,27 +15,14 @@ limitations under the License.
 */
 
 /**
- * The result of validating a field.
- */
-export interface ValidationResult {
-  valid: boolean;
-  message?: string;
-}
-
-/**
- * A function to validate a field value.
- */
-export type Rule<T, R = ValidationResult> = (value: T) => () => R;
-
-/**
  * requiredField checks for empty strings and arrays.
  *
  * @param message The custom error message to display to users.
  * @param value The value user entered.
  */
 const requiredField =
-  <T = string>(message: string): Rule<string | T[]> =>
-  value =>
+  (message: string) =>
+  <T = string>(value: string | T[]) =>
   () => {
     const valid = !(!value || value.length === 0);
     return {
@@ -44,7 +31,7 @@ const requiredField =
     };
   };
 
-const requiredToken: Rule<string> = (value: string) => () => {
+const requiredToken = (value: string) => () => {
   if (!value || value.length === 0) {
     return {
       valid: false,
@@ -57,7 +44,7 @@ const requiredToken: Rule<string> = (value: string) => () => {
   };
 };
 
-const requiredPassword: Rule<string> = (value: string) => () => {
+const requiredPassword = (value: string) => () => {
   if (!value || value.length < 6) {
     return {
       valid: false,
@@ -71,9 +58,7 @@ const requiredPassword: Rule<string> = (value: string) => () => {
 };
 
 const requiredConfirmedPassword =
-  (password: string): Rule<string> =>
-  (confirmedPassword: string) =>
-  () => {
+  (password: string) => (confirmedPassword: string) => () => {
     if (!confirmedPassword) {
       return {
         valid: false,
@@ -96,7 +81,7 @@ const requiredConfirmedPassword =
 // requiredRoleArn checks provided arn (AWS role name) is somewhat
 // in the format as documented here:
 // https://docs.aws.amazon.com/IAM/latest/UserGuide/reference-arns.html
-const requiredRoleArn: Rule<string> = (roleArn: string) => () => {
+const requiredRoleArn = (roleArn: string) => () => {
   let parts = [];
   if (roleArn) {
     parts = roleArn.split(':role');
@@ -120,42 +105,10 @@ const requiredRoleArn: Rule<string> = (roleArn: string) => () => {
   };
 };
 
-export interface EmailValidationResult extends ValidationResult {
-  kind?: 'empty' | 'invalid';
-}
-
-// requiredEmailLike ensures a string contains a plausible email, i.e. that it
-// contains an '@' and some characters on each side.
-const requiredEmailLike: Rule<string, EmailValidationResult> =
-  (email: string) => () => {
-    if (!email) {
-      return {
-        valid: false,
-        kind: 'empty',
-        message: 'Email address is required',
-      };
-    }
-
-    // Must contain an @, i.e. 2 entries, and each must be nonempty.
-    let parts = email.split('@');
-    if (parts.length !== 2 || !parts[0] || !parts[1]) {
-      return {
-        valid: false,
-        kind: 'invalid',
-        message: `Email address '${email}' is invalid`,
-      };
-    }
-
-    return {
-      valid: true,
-    };
-  };
-
 export {
   requiredToken,
   requiredPassword,
   requiredConfirmedPassword,
   requiredField,
   requiredRoleArn,
-  requiredEmailLike,
 };

@@ -60,14 +60,6 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-// TestNodesDontCacheHighVolumeResources verifies that resources classified as "high volume" aren't
-// cached by nodes.
-func TestNodesDontCacheHighVolumeResources(t *testing.T) {
-	for _, kind := range ForNode(Config{}).Watches {
-		require.False(t, isHighVolumeResource(kind.Kind), "resource=%q", kind.Kind)
-	}
-}
-
 // testPack contains pack of
 // services used for test run
 type testPack struct {
@@ -1431,22 +1423,16 @@ func TestUsers(t *testing.T) {
 		newResource: func(name string) (types.User, error) {
 			return types.NewUser("bob")
 		},
-		create: func(ctx context.Context, user types.User) error {
-			_, err := p.usersS.UpsertUser(ctx, user)
-			return err
-		},
+		create: modifyNoContext(p.usersS.UpsertUser),
 		list: func(ctx context.Context) ([]types.User, error) {
-			return p.usersS.GetUsers(ctx, false)
+			return p.usersS.GetUsers(false)
 		},
 		cacheList: func(ctx context.Context) ([]types.User, error) {
-			return p.cache.GetUsers(ctx, false)
+			return p.cache.GetUsers(false)
 		},
-		update: func(ctx context.Context, user types.User) error {
-			_, err := p.usersS.UpdateUser(ctx, user)
-			return err
-		},
-		deleteAll: func(ctx context.Context) error {
-			return p.usersS.DeleteAllUsers(ctx)
+		update: modifyNoContext(p.usersS.UpsertUser),
+		deleteAll: func(_ context.Context) error {
+			return p.usersS.DeleteAllUsers()
 		},
 	})
 }
@@ -1471,19 +1457,13 @@ func TestRoles(t *testing.T) {
 				Deny: types.RoleConditions{},
 			})
 		},
-		create: func(ctx context.Context, role types.Role) error {
-			_, err := p.accessS.UpsertRole(ctx, role)
-			return err
-		},
+		create:    p.accessS.UpsertRole,
 		list:      p.accessS.GetRoles,
 		cacheGet:  p.cache.GetRole,
 		cacheList: p.cache.GetRoles,
-		update: func(ctx context.Context, role types.Role) error {
-			_, err := p.accessS.UpsertRole(ctx, role)
-			return err
-		},
-		deleteAll: func(ctx context.Context) error {
-			return p.accessS.DeleteAllRoles(ctx)
+		update:    p.accessS.UpsertRole,
+		deleteAll: func(_ context.Context) error {
+			return p.accessS.DeleteAllRoles()
 		},
 	})
 }
@@ -2754,13 +2734,11 @@ func TestPartialHealth(t *testing.T) {
 
 	role, err := types.NewRole("editor", types.RoleSpecV6{})
 	require.NoError(t, err)
-	_, err = p.accessS.UpsertRole(ctx, role)
-	require.NoError(t, err)
+	require.NoError(t, p.accessS.UpsertRole(ctx, role))
 
 	user, err := types.NewUser("bob")
 	require.NoError(t, err)
-	user, err = p.usersS.UpsertUser(ctx, user)
-	require.NoError(t, err)
+	require.NoError(t, p.usersS.UpsertUser(user))
 	select {
 	case event := <-p.eventsC:
 		require.Equal(t, EventProcessed, event.Type)
@@ -2770,7 +2748,7 @@ func TestPartialHealth(t *testing.T) {
 	}
 
 	// make sure that the user resource works as normal and gets replicated to cache
-	replicatedUsers, err := p.cache.GetUsers(ctx, false)
+	replicatedUsers, err := p.cache.GetUsers(false)
 	require.NoError(t, err)
 	require.Len(t, replicatedUsers, 1)
 
@@ -2778,11 +2756,10 @@ func TestPartialHealth(t *testing.T) {
 	meta := user.GetMetadata()
 	meta.Labels = map[string]string{"origin": "cache"}
 	user.SetMetadata(meta)
-	_, err = p.cache.usersCache.UpsertUser(ctx, user)
-	require.NoError(t, err)
+	require.NoError(t, p.cache.usersCache.UpsertUser(user))
 
 	// the label on the returned user proves that it came from the cache
-	resultUser, err := p.cache.GetUser(ctx, "bob", false)
+	resultUser, err := p.cache.GetUser("bob", false)
 	require.NoError(t, err)
 	require.Equal(t, "cache", resultUser.GetMetadata().Labels["origin"])
 

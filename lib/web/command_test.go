@@ -75,8 +75,7 @@ func TestExecuteCommand(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	assistRole, err = s.server.Auth().UpsertRole(s.ctx, assistRole)
-	require.NoError(t, err)
+	require.NoError(t, s.server.Auth().UpsertRole(s.ctx, assistRole))
 
 	ws, _, err := s.makeCommand(t, s.authPack(t, testUser, assistRole.GetName()), uuid.New())
 	require.NoError(t, err)
@@ -106,8 +105,7 @@ func TestExecuteCommandHistory(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	assistRole, err = s.server.Auth().UpsertRole(s.ctx, assistRole)
-	require.NoError(t, err)
+	require.NoError(t, s.server.Auth().UpsertRole(s.ctx, assistRole))
 
 	authPack := s.authPack(t, testUser, assistRole.GetName())
 
@@ -186,8 +184,7 @@ func TestExecuteCommandSummary(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	assistRole, err = s.server.Auth().UpsertRole(s.ctx, assistRole)
-	require.NoError(t, err)
+	require.NoError(t, s.server.Auth().UpsertRole(s.ctx, assistRole))
 
 	authPack := s.authPack(t, testUser, assistRole.GetName())
 

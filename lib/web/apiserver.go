@@ -174,10 +174,6 @@ type proxySettingsGetter interface {
 	GetProxySettings(ctx context.Context) (*webclient.ProxySettings, error)
 }
 
-// PresenceChecker is a function that executes an mfa prompt to enforce
-// that a user is present.
-type PresenceChecker = func(ctx context.Context, term io.Writer, maintainer client.PresenceMaintainer, sessionID string, promptMFA client.PromptMFAFunc, opts ...client.PresenceOption) error
-
 // Config represents web handler configuration parameters
 type Config struct {
 	// PluginRegistry handles plugin registration
@@ -275,10 +271,6 @@ type Config struct {
 	// NodeWatcher is a services.NodeWatcher used by Assist to lookup nodes from
 	// the proxy's cache and get nodes in real time.
 	NodeWatcher *services.NodeWatcher
-
-	// PresenceChecker periodically runs the mfa ceremony for moderated
-	// sessions.
-	PresenceChecker PresenceChecker
 }
 
 // SetDefaults ensures proper default values are set if
@@ -288,10 +280,6 @@ func (c *Config) SetDefaults() {
 
 	if c.TracerProvider == nil {
 		c.TracerProvider = tracing.NoopProvider()
-	}
-
-	if c.PresenceChecker == nil {
-		c.PresenceChecker = client.RunPresenceTask
 	}
 }
 
@@ -764,14 +752,13 @@ func (h *Handler) bindDefaultEndpoints() {
 	h.GET("/webapi/user/status", h.WithAuth(h.getUserStatus))
 
 	h.GET("/webapi/roles", h.WithAuth(h.getRolesHandle))
-	h.POST("/webapi/roles", h.WithAuth(h.createRoleHandle))
-	h.PUT("/webapi/roles/:name", h.WithAuth(h.updateRoleHandle))
+	h.POST("/webapi/roles", h.WithAuth(h.upsertRoleHandle))
+	h.PUT("/webapi/roles/:name", h.WithAuth(h.upsertRoleHandle))
 	h.DELETE("/webapi/roles/:name", h.WithAuth(h.deleteRole))
-	h.GET("/webapi/presetroles", h.WithUnauthenticatedHighLimiter(h.getPresetRoles))
 
 	h.GET("/webapi/github", h.WithAuth(h.getGithubConnectorsHandle))
-	h.POST("/webapi/github", h.WithAuth(h.createGithubConnectorHandle))
-	h.PUT("/webapi/github/:name", h.WithAuth(h.updateGithubConnectorHandle))
+	h.POST("/webapi/github", h.WithAuth(h.upsertGithubConnectorHandle))
+	h.PUT("/webapi/github/:name", h.WithAuth(h.upsertGithubConnectorHandle))
 	h.DELETE("/webapi/github/:name", h.WithAuth(h.deleteGithubConnector))
 
 	h.GET("/webapi/trustedcluster", h.WithAuth(h.getTrustedClustersHandle))
@@ -960,7 +947,7 @@ func (h *Handler) getUserContext(w http.ResponseWriter, r *http.Request, p httpr
 		return nil, trace.Wrap(err)
 	}
 
-	user, err := clt.GetUser(r.Context(), c.GetUser(), false)
+	user, err := clt.GetUser(c.GetUser(), false)
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
@@ -2267,7 +2254,7 @@ func (h *Handler) trySettingConnectorNameToPasswordless(ctx context.Context, ses
 		return nil
 	}
 
-	users, err := h.cfg.ProxyClient.GetUsers(ctx, false)
+	users, err := h.cfg.ProxyClient.GetUsers(false)
 	if err != nil {
 		return trace.Wrap(err)
 	}
@@ -2984,7 +2971,7 @@ func (h *Handler) siteNodeConnect(
 		ParticipantMode:    req.ParticipantMode,
 		PROXYSigner:        h.cfg.PROXYSigner,
 		Tracker:            tracker,
-		PresenceChecker:    h.cfg.PresenceChecker,
+		Clock:              h.clock,
 	}
 
 	term, err := NewTerminal(ctx, terminalConfig)

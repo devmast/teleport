@@ -98,8 +98,7 @@ func TestDiagnoseConnectionForPostgresDatabases(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	roleWithFullAccess, err = authServer.UpsertRole(ctx, roleWithFullAccess)
-	require.NoError(t, err)
+	require.NoError(t, authServer.UpsertRole(ctx, roleWithFullAccess))
 
 	for _, tt := range []struct {
 		name         string
@@ -200,8 +199,7 @@ func TestDiagnoseConnectionForPostgresDatabases(t *testing.T) {
 			require.NoError(t, err)
 
 			user.AddRole(roleWithFullAccess.GetName())
-			_, err = authServer.UpsertUser(ctx, user)
-			require.NoError(t, err)
+			require.NoError(t, authServer.UpsertUser(user))
 
 			userPassword := uuid.NewString()
 			require.NoError(t, authServer.UpsertPassword(tt.teleportUser, []byte(userPassword)))
@@ -266,8 +264,7 @@ func TestDiagnoseConnectionForPostgresDatabases(t *testing.T) {
 	user, err := types.NewUser("llama")
 	require.NoError(t, err)
 	user.AddRole(roleWithFullAccess.GetName())
-	_, err = authServer.UpsertUser(ctx, user)
-	require.NoError(t, err)
+	require.NoError(t, authServer.UpsertUser(user))
 	userPassword := uuid.NewString()
 	require.NoError(t, authServer.UpsertPassword("llama", []byte(userPassword)))
 	webPack := helpers.LoginWebClient(t, proxyAddr.String(), "llama", userPassword)

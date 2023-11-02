@@ -1,6 +1,5 @@
 ARG BUILDBOX
-ARG BASE_IMAGE=gcr.io/distroless/static-debian12
-
+ARG BASE_IMAGE=gcr.io/distroless/static-debian11
 # BUILDPLATFORM is provided by Docker/buildx
 FROM --platform=$BUILDPLATFORM $BUILDBOX as builder
 

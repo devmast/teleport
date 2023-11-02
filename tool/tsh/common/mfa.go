@@ -325,17 +325,33 @@ func (c *mfaAddCommand) addDeviceRPC(ctx context.Context, tc *client.TeleportCli
 
 		// TODO(awly): mfa: move this logic somewhere under /lib/auth/, closer
 		// to the server logic. The CLI layer should ideally be thin.
-
+		stream, err := aci.AddMFADevice(ctx)
+		if err != nil {
+			return trace.Wrap(err)
+		}
+		// Init.
 		usage := proto.DeviceUsage_DEVICE_USAGE_MFA
 		if c.allowPasswordless {
 			usage = proto.DeviceUsage_DEVICE_USAGE_PASSWORDLESS
 		}
+		if err := stream.Send(&proto.AddMFADeviceRequest{Request: &proto.AddMFADeviceRequest_Init{
+			Init: &proto.AddMFADeviceRequestInit{
+				DeviceName:  c.devName,
+				DeviceType:  devTypePB,
+				DeviceUsage: usage,
+			},
+		}}); err != nil {
+			return trace.Wrap(err)
+		}
 
-		// Issue the authn challenge.
-		// Required for the registration challenge.
-		authChallenge, err := aci.CreateAuthenticateChallenge(ctx, &proto.CreateAuthenticateChallengeRequest{})
+		// Auth challenge using existing device.
+		resp, err := stream.Recv()
 		if err != nil {
 			return trace.Wrap(err)
+		}
+		authChallenge := resp.GetExistingMFAChallenge()
+		if authChallenge == nil {
+			return trace.BadParameter("server bug: server sent %T when client expected AddMFADeviceResponse_ExistingMFAChallenge", resp.Response)
 		}
 
 		// Tweak Windows platform messages so it's clear we whether we are prompting
@@ -347,46 +363,52 @@ func (c *mfaAddCommand) addDeviceRPC(ctx context.Context, tc *client.TeleportCli
 		defer wanwin.ResetPromptPlatformMessage()
 		wanwin.PromptPlatformMessage = registeredMsg
 
-		// Prompt for authentication.
-		// Does nothing if no challenges were issued (aka user has no devices).
-		authnResp, err := tc.NewMFAPrompt(mfa.WithPromptDevicePrefix("*registered*"))(ctx, authChallenge)
+		authResp, err := tc.NewMFAPrompt(mfa.WithPromptDevicePrefix("*registered*"))(ctx, authChallenge)
 		if err != nil {
 			return trace.Wrap(err)
 		}
-
-		// Issue the registration challenge.
-		registerChallenge, err := aci.CreateRegisterChallenge(ctx, &proto.CreateRegisterChallengeRequest{
-			ExistingMFAResponse: authnResp,
-			DeviceType:          devTypePB,
-			DeviceUsage:         usage,
-		})
-		if err != nil {
+		if err := stream.Send(&proto.AddMFADeviceRequest{Request: &proto.AddMFADeviceRequest_ExistingMFAResponse{
+			ExistingMFAResponse: authResp,
+		}}); err != nil {
 			return trace.Wrap(err)
 		}
 
-		// Prompt for registration.
+		// Registration challenge for new device.
+		resp, err = stream.Recv()
+		if err != nil {
+			return trace.Wrap(err)
+		}
+		regChallenge := resp.GetNewMFARegisterChallenge()
+		if regChallenge == nil {
+			return trace.BadParameter("server bug: server sent %T when client expected AddMFADeviceResponse_NewMFARegisterChallenge", resp.Response)
+		}
+
 		wanwin.PromptPlatformMessage = newMsg
-		registerResp, registerCallback, err := promptRegisterChallenge(ctx, tc.WebProxyAddr, c.devType, registerChallenge)
+		regResp, regCallback, err := promptRegisterChallenge(ctx, tc.WebProxyAddr, c.devType, regChallenge)
 		if err != nil {
 			return trace.Wrap(err)
 		}
+		if err := stream.Send(&proto.AddMFADeviceRequest{Request: &proto.AddMFADeviceRequest_NewMFARegisterResponse{
+			NewMFARegisterResponse: regResp,
+		}}); err != nil {
+			regCallback.Rollback()
+			return trace.Wrap(err)
+		}
 
-		// Complete registration and confirm new key.
-		addResp, err := aci.AddMFADeviceSync(ctx, &proto.AddMFADeviceSyncRequest{
-			NewDeviceName:  c.devName,
-			NewMFAResponse: registerResp,
-			DeviceUsage:    usage,
-		})
+		// Receive registered device ack.
+		resp, err = stream.Recv()
 		if err != nil {
-			registerCallback.Rollback() // Attempt to delete new key.
+			// Don't rollback here, the registration may have been successful.
 			return trace.Wrap(err)
 		}
-		if err := registerCallback.Confirm(); err != nil {
-			return trace.Wrap(err)
+		ack := resp.GetAck()
+		if ack == nil {
+			// Don't rollback here, the registration may have been successful.
+			return trace.BadParameter("server bug: server sent %T when client expected AddMFADeviceResponse_Ack", resp.Response)
 		}
+		dev = ack.Device
 
-		dev = addResp.Device
-		return nil
+		return regCallback.Confirm()
 	}); err != nil {
 		return nil, trace.Wrap(err)
 	}
@@ -504,14 +526,9 @@ func promptTOTPRegisterChallenge(ctx context.Context, c *proto.TOTPRegisterChall
 		}
 		fmt.Printf("TOTP code must be exactly %d digits long, try again\n", c.Digits)
 	}
-	return &proto.MFARegisterResponse{
-		Response: &proto.MFARegisterResponse_TOTP{
-			TOTP: &proto.TOTPRegisterResponse{
-				Code: totpCode,
-				ID:   c.ID,
-			},
-		},
-	}, nil
+	return &proto.MFARegisterResponse{Response: &proto.MFARegisterResponse_TOTP{
+		TOTP: &proto.TOTPRegisterResponse{Code: totpCode},
+	}}, nil
 }
 
 func promptWebauthnRegisterChallenge(ctx context.Context, origin string, cc *wantypes.CredentialCreation) (*proto.MFARegisterResponse, error) {
@@ -559,62 +576,61 @@ func (c *mfaRemoveCommand) run(cf *CLIConf) error {
 		return trace.Wrap(err)
 	}
 
-	ctx := cf.Context
-	if err := client.RetryWithRelogin(ctx, tc, func() error {
-		pc, err := tc.ConnectToProxy(ctx)
+	if err := client.RetryWithRelogin(cf.Context, tc, func() error {
+		pc, err := tc.ConnectToProxy(cf.Context)
 		if err != nil {
 			return trace.Wrap(err)
 		}
 		defer pc.Close()
-		aci, err := pc.ConnectToRootCluster(ctx)
+		aci, err := pc.ConnectToRootCluster(cf.Context)
 		if err != nil {
 			return trace.Wrap(err)
 		}
 		defer aci.Close()
 
-		// Lookup device to delete.
-		// This lets us exit early if the device doesn't exist and enables the
-		// Touch ID cleanup at the end.
-		devicesResp, err := aci.GetMFADevices(ctx, &proto.GetMFADevicesRequest{})
+		stream, err := aci.DeleteMFADevice(cf.Context)
 		if err != nil {
 			return trace.Wrap(err)
 		}
-		var deviceToDelete *types.MFADevice
-		for _, dev := range devicesResp.Devices {
-			if dev.GetName() == c.name {
-				deviceToDelete = dev
-				break
-			}
-		}
-		if deviceToDelete == nil {
-			return trace.NotFound("device %q not found", c.name)
-		}
-
-		// Issue and solve authn challenge.
-		authnChal, err := aci.CreateAuthenticateChallenge(ctx, &proto.CreateAuthenticateChallengeRequest{
-			Request: &proto.CreateAuthenticateChallengeRequest_ContextUser{
-				ContextUser: &proto.ContextUser{},
+		// Init.
+		if err := stream.Send(&proto.DeleteMFADeviceRequest{Request: &proto.DeleteMFADeviceRequest_Init{
+			Init: &proto.DeleteMFADeviceRequestInit{
+				DeviceName: c.name,
 			},
-		})
-		if err != nil {
-			return trace.Wrap(err)
-		}
-		authnSolved, err := tc.PromptMFA(ctx, authnChal)
-		if err != nil {
+		}}); err != nil {
 			return trace.Wrap(err)
 		}
 
-		// Delete device.
-		if err := aci.DeleteMFADeviceSync(ctx, &proto.DeleteMFADeviceSyncRequest{
-			DeviceName:          c.name,
-			ExistingMFAResponse: authnSolved,
-		}); err != nil {
+		// Auth challenge.
+		resp, err := stream.Recv()
+		if err != nil {
+			return trace.Wrap(err)
+		}
+		authChallenge := resp.GetMFAChallenge()
+		if authChallenge == nil {
+			return trace.BadParameter("server bug: server sent %T when client expected DeleteMFADeviceResponse_MFAChallenge", resp.Response)
+		}
+		authResp, err := tc.PromptMFA(cf.Context, authChallenge)
+		if err != nil {
+			return trace.Wrap(err)
+		}
+		if err := stream.Send(&proto.DeleteMFADeviceRequest{Request: &proto.DeleteMFADeviceRequest_MFAResponse{
+			MFAResponse: authResp,
+		}}); err != nil {
 			return trace.Wrap(err)
 		}
 
-		// If deleted device was a webauthn device, then attempt to delete leftover
-		// Touch ID credentials.
-		if wanDevice := deviceToDelete.GetWebauthn(); wanDevice != nil {
+		// Receive deletion ack.
+		resp, err = stream.Recv()
+		if err != nil {
+			return trace.Wrap(err)
+		}
+		ack := resp.GetAck()
+		if ack == nil {
+			return trace.BadParameter("server bug: server sent %T when client expected DeleteMFADeviceResponse_Ack", resp.Response)
+		}
+		// If deleted device was webauthn device, try to delete touch-id credentials.
+		if wanDevice := ack.GetDevice().GetWebauthn(); wanDevice != nil {
 			deleteTouchIDCredentialIfApplicable(string(wanDevice.CredentialId))
 		}
 

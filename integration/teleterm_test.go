@@ -208,18 +208,18 @@ func testGetClusterReturnsPropertiesFromAuthServer(t *testing.T, pack *dbhelpers
 	require.NoError(t, err)
 
 	// add role that user can request
-	_, err = authServer.UpsertRole(context.Background(), requestableRole)
+	err = authServer.UpsertRole(context.Background(), requestableRole)
 	require.NoError(t, err)
 
 	// add role that allows to request "requestableRole"
-	_, err = authServer.UpsertRole(context.Background(), userRole)
+	err = authServer.UpsertRole(context.Background(), userRole)
 	require.NoError(t, err)
 
 	user, err := types.NewUser(userName)
 	user.AddRole(userRole.GetName())
 	require.NoError(t, err)
 
-	_, err = authServer.UpsertUser(context.Background(), user)
+	err = authServer.UpsertUser(user)
 	require.NoError(t, err)
 
 	creds, err := helpers.GenerateUserCreds(helpers.UserCredsRequest{
@@ -473,7 +473,7 @@ func testCreateConnectMyComputerRole(t *testing.T, pack *dbhelpers.DatabasePack)
 					Name: roleName,
 				})
 				existingRole = &role
-				_, err := authServer.UpsertRole(ctx, &role)
+				err := authServer.UpsertRole(ctx, &role)
 				require.NoError(t, err)
 			}
 
@@ -500,7 +500,7 @@ func testCreateConnectMyComputerRole(t *testing.T, pack *dbhelpers.DatabasePack)
 				}
 				userRoles = append(userRoles, existingRole)
 			}
-			_, err = auth.CreateUser(ctx, authServer, userName, userRoles...)
+			_, err = auth.CreateUser(authServer, userName, userRoles...)
 			require.NoError(t, err)
 
 			userPassword := uuid
@@ -607,7 +607,7 @@ func testCreatingAndDeletingConnectMyComputerToken(t *testing.T, pack *dbhelpers
 	require.NoError(t, err)
 	userRoles := []types.Role{ruleWithAllowRules}
 
-	_, err = auth.CreateUser(ctx, authServer, userName, userRoles...)
+	_, err = auth.CreateUser(authServer, userName, userRoles...)
 	require.NoError(t, err)
 
 	// Log in as the new user.
@@ -629,7 +629,6 @@ func testCreatingAndDeletingConnectMyComputerToken(t *testing.T, pack *dbhelpers
 	require.NoError(t, err)
 
 	daemonService, err := daemon.New(daemon.Config{
-		Clock:          fakeClock,
 		Storage:        storage,
 		KubeconfigsDir: t.TempDir(),
 		AgentsDir:      t.TempDir(),
@@ -782,7 +781,7 @@ func testDeleteConnectMyComputerNode(t *testing.T, pack *dbhelpers.DatabasePack)
 	require.NoError(t, err)
 	userRoles := []types.Role{ruleWithAllowRules}
 
-	_, err = auth.CreateUser(ctx, authServer, userName, userRoles...)
+	_, err = auth.CreateUser(authServer, userName, userRoles...)
 	require.NoError(t, err)
 
 	// Log in as the new user.

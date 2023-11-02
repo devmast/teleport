@@ -116,6 +116,6 @@ func GetUserOrLoginState(ctx context.Context, getter UserOrLoginStateGetter, use
 		return uls, nil
 	}
 
-	user, err := getter.GetUser(ctx, username, false)
+	user, err := getter.GetUser(username, false)
 	return user, trace.Wrap(err)
 }

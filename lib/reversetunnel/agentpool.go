@@ -250,9 +250,8 @@ func (p *AgentPool) Start() error {
 
 	p.wg.Add(1)
 	go func() {
-		if err := p.run(); err != nil {
-			p.log.WithError(err).Warn("Agent pool exited.")
-		}
+		err := p.run()
+		p.log.WithError(err).Warn("Agent pool exited.")
 
 		p.cancel()
 		p.wg.Done()
@@ -263,13 +262,15 @@ func (p *AgentPool) Start() error {
 // run connects agents until the agent pool context is done.
 func (p *AgentPool) run() error {
 	for {
+		if p.ctx.Err() != nil {
+			return trace.Wrap(p.ctx.Err())
+		}
+
 		agent, err := p.connectAgent(p.ctx, p.events)
 		if err != nil {
-			if p.ctx.Err() != nil {
-				return nil
-			} else if isProxyAlreadyClaimed(err) {
-				// "proxy already claimed" is a fairly benign error, we should not
-				// spam the log with stack traces for it
+			// "proxy already claimed" is a fairly benign error, we should not
+			// spam the log with stack traces for it
+			if isProxyAlreadyClaimed(err) {
 				p.log.Debugf("Failed to connect agent: %v.", err)
 			} else {
 				p.log.WithError(err).Debugf("Failed to connect agent.")
@@ -281,9 +282,7 @@ func (p *AgentPool) run() error {
 		}
 
 		err = p.waitForBackoff(p.ctx, p.events)
-		if p.ctx.Err() != nil {
-			return nil
-		} else if err != nil {
+		if err != nil {
 			p.log.WithError(err).Debugf("Failed to wait for backoff.")
 		}
 	}
@@ -393,7 +392,7 @@ func (p *AgentPool) waitForBackoff(ctx context.Context, events <-chan Agent) err
 	for {
 		select {
 		case <-ctx.Done():
-			return nil
+			return trace.Wrap(ctx.Err())
 		case <-p.backoff.After():
 			p.backoff.Inc()
 			return nil

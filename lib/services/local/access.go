@@ -41,17 +41,13 @@ func NewAccessService(backend backend.Backend) *AccessService {
 }
 
 // DeleteAllRoles deletes all roles
-func (s *AccessService) DeleteAllRoles(ctx context.Context) error {
-	startKey := backend.Key(rolesPrefix)
-	endKey := backend.RangeEnd(startKey)
-	return s.DeleteRange(ctx, startKey, endKey)
+func (s *AccessService) DeleteAllRoles() error {
+	return s.DeleteRange(context.TODO(), backend.Key(rolesPrefix), backend.RangeEnd(backend.Key(rolesPrefix)))
 }
 
 // GetRoles returns a list of roles registered with the local auth server
 func (s *AccessService) GetRoles(ctx context.Context) ([]types.Role, error) {
-	startKey := backend.ExactKey(rolesPrefix)
-	endKey := backend.RangeEnd(startKey)
-	result, err := s.GetRange(ctx, startKey, endKey, backend.NoLimit)
+	result, err := s.GetRange(ctx, backend.Key(rolesPrefix), backend.RangeEnd(backend.Key(rolesPrefix)), backend.NoLimit)
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
@@ -72,46 +68,42 @@ func (s *AccessService) GetRoles(ctx context.Context) ([]types.Role, error) {
 	return out, nil
 }
 
-// CreateRole creates a new role.
-func (s *AccessService) CreateRole(ctx context.Context, role types.Role) (types.Role, error) {
+// CreateRole creates a role on the backend.
+func (s *AccessService) CreateRole(ctx context.Context, role types.Role) error {
 	err := services.ValidateRoleName(role)
 	if err != nil {
-		return nil, trace.Wrap(err)
+		return trace.Wrap(err)
 	}
 
-	rev := role.GetRevision()
 	value, err := services.MarshalRole(role)
 	if err != nil {
-		return nil, trace.Wrap(err)
+		return trace.Wrap(err)
 	}
 
 	item := backend.Item{
-		Key:      backend.Key(rolesPrefix, role.GetName(), paramsPrefix),
-		Value:    value,
-		Expires:  role.Expiry(),
-		ID:       role.GetResourceID(),
-		Revision: rev,
+		Key:     backend.Key(rolesPrefix, role.GetName(), paramsPrefix),
+		Value:   value,
+		Expires: role.Expiry(),
 	}
 
-	lease, err := s.Create(ctx, item)
+	_, err = s.Create(ctx, item)
 	if err != nil {
-		return nil, trace.Wrap(err)
+		return trace.Wrap(err)
 	}
-	role.SetRevision(lease.Revision)
-	return role, nil
+	return nil
 }
 
-// UpdateRole updates an existing role.
-func (s *AccessService) UpdateRole(ctx context.Context, role types.Role) (types.Role, error) {
+// UpsertRole updates parameters about role
+func (s *AccessService) UpsertRole(ctx context.Context, role types.Role) error {
 	err := services.ValidateRoleName(role)
 	if err != nil {
-		return nil, trace.Wrap(err)
+		return trace.Wrap(err)
 	}
 
 	rev := role.GetRevision()
 	value, err := services.MarshalRole(role)
 	if err != nil {
-		return nil, trace.Wrap(err)
+		return trace.Wrap(err)
 	}
 
 	item := backend.Item{
@@ -122,41 +114,11 @@ func (s *AccessService) UpdateRole(ctx context.Context, role types.Role) (types.
 		Revision: rev,
 	}
 
-	lease, err := s.ConditionalUpdate(ctx, item)
+	_, err = s.Put(ctx, item)
 	if err != nil {
-		return nil, trace.Wrap(err)
+		return trace.Wrap(err)
 	}
-	role.SetRevision(lease.Revision)
-	return role, nil
-}
-
-// UpsertRole creates or overwrites an existing role.
-func (s *AccessService) UpsertRole(ctx context.Context, role types.Role) (types.Role, error) {
-	err := services.ValidateRoleName(role)
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-
-	rev := role.GetRevision()
-	value, err := services.MarshalRole(role)
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-
-	item := backend.Item{
-		Key:      backend.Key(rolesPrefix, role.GetName(), paramsPrefix),
-		Value:    value,
-		Expires:  role.Expiry(),
-		ID:       role.GetResourceID(),
-		Revision: rev,
-	}
-
-	lease, err := s.Put(ctx, item)
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-	role.SetRevision(lease.Revision)
-	return role, nil
+	return nil
 }
 
 // GetRole returns a role by name
@@ -206,7 +168,7 @@ func (s *AccessService) GetLock(ctx context.Context, name string) (types.Lock, e
 
 // GetLocks gets all/in-force locks that match at least one of the targets when specified.
 func (s *AccessService) GetLocks(ctx context.Context, inForceOnly bool, targets ...types.LockTarget) ([]types.Lock, error) {
-	startKey := backend.ExactKey(locksPrefix)
+	startKey := backend.Key(locksPrefix)
 	result, err := s.GetRange(ctx, startKey, backend.RangeEnd(startKey), backend.NoLimit)
 	if err != nil {
 		return nil, trace.Wrap(err)
@@ -274,7 +236,7 @@ func (s *AccessService) DeleteLock(ctx context.Context, name string) error {
 
 // DeleteLock deletes all/in-force locks.
 func (s *AccessService) DeleteAllLocks(ctx context.Context) error {
-	startKey := backend.ExactKey(locksPrefix)
+	startKey := backend.Key(locksPrefix)
 	return s.DeleteRange(ctx, startKey, backend.RangeEnd(startKey))
 }
 
@@ -287,7 +249,7 @@ func (s *AccessService) ReplaceRemoteLocks(ctx context.Context, clusterName stri
 			TTL:      time.Minute,
 		},
 	}, func(ctx context.Context) error {
-		remoteLocksKey := backend.ExactKey(locksPrefix, clusterName)
+		remoteLocksKey := backend.Key(locksPrefix, clusterName)
 		origRemoteLocks, err := s.GetRange(ctx, remoteLocksKey, backend.RangeEnd(remoteLocksKey), backend.NoLimit)
 		if err != nil {
 			return trace.Wrap(err)

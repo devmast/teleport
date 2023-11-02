@@ -14,8 +14,6 @@ For main, test with a role that has access to all resources.
   - [ ] Connect to a Teleport node
   - [ ] Connect to a OpenSSH node
   - [ ] Check agent forwarding is correct based on role and proxy mode.
-     - Set `forward_agent: true` under the `options` section of your role, and then test that your
-       teleport certs show up when you run `ssh-add -l` on the node.
 
 #### Top Nav
 - [ ] Verify that cluster selector displays all (root + leaf) clusters
@@ -27,32 +25,27 @@ For main, test with a role that has access to all resources.
 - [ ] Verify that Collapse/Expand works and collapsed has icon `>`, and expand has icon `v`
 - [ ] Verify that it automatically expands and highlights the item on page refresh
 
-### Unified Resources
-- [ ] Verify that scrolling to the bottom of the page renders more resources
-- [ ] Verify that all resource types are visible if no filters are present
-- [ ] Verify that "Search" by (host)name, address, labels works for all resources
 #### Servers aka Nodes
-- [ ] Verify that "Servers" type shows all joined nodes
+- [ ] Verify that "Servers" table shows all joined nodes
 - [ ] Verify that "Connect" button shows a list of available logins
+- [ ] Verify that "Hostname", "Address" and "Labels" columns show the current values
+- [ ] Verify that "Search" by hostname, address, labels works
 - [ ] Verify that terminal opens when clicking on one of the available logins
-- [ ] Verify that clicking on `Add Resource` button correctly sends to the resource discovery page
+- [ ] Verify that clicking on `Add Server` button renders dialogue set to `Automatically` view
+  - [ ] Verify clicking on `Regenerate Script` regenerates token value in the bash command
+  - [ ] Verify using the bash command successfully adds the server (refresh server list)
+  - [ ] Verify that clicking on `Manually` tab renders manual steps
+  - [ ] Verify that clicking back to `Automatically` tab renders bash command
+
 #### Applications
-- [ ] Verify that the app icons are correctly displayed
-- [ ] Verify that filtering types by Application includes applications in the page
-- [ ] Verify that the `Launch` button for applications correctly send to the app
-- [ ] Verify that the `Launch` button for AWS apps correctly renders an IAM role selection window 
+- [ ] Verify that clicking on `Add Application` button renders dialogue
+  - [ ] Verify input validation (prevent empty value and invalid url)
+  - [ ] Verify after input and clicking on `Generate Script`, bash command is rendered
+  - [ ] Verify clicking on `Regenerate` button regenerates token value in bash command
+
 #### Databases
-- [ ] Verify that the database subtype icons are correctly displayed
-- [ ] Verify that filtering types by Databases includes databases in the page
-- [ ] Verify that clicking `Connect` renders the dialog with correct information
-
-#### Kubes
-- [ ] Verify that filtering types by Kubes includes kubes in the page
-- [ ] Verify that clicking `Connect` renders the dialog with correct information
-
-#### Desktops
-- [ ] Verify that filtering types by Desktops includes desktops in the page
-- [ ] Verify that clicking `Connect` renders a login selection and that the logins are completely in view
+- [ ] Verify that clicking on `Add Database` button renders dialogue for manual instructions:
+  - [ ] Verify selecting different options on `Step 4` changes `Step 5` commands
 #### Active Sessions
 - [ ] Verify that "empty" state is handled
 - [ ] Verify that it displays the session when session is active
@@ -291,6 +284,8 @@ With the previous role you created from `Strategy Reason`, change `request_acces
 
 #### Node List Tab
 - [ ] Verify that Cluster selector works (URL should change too)
+- [ ] Verify that Quick launcher input works
+- [ ] Verify that Quick launcher input handles input errors
 - [ ] Verify that "Connect" button shows a list of available logins
 - [ ] Verify that "Hostname", "Address" and "Labels" columns show the current values
 - [ ] Verify that "Search" by hostname, address, labels work
@@ -580,15 +575,7 @@ Use Discover Wizard to enroll new resources and access them:
 - Kubernetes access
    - [ ] Open a new kubernetes tab, run `echo $KUBECONFIG` and check if it points to the file within Connect's app data directory.
    - [ ] Close the tab and open it again (to the same resource). Verify that the kubeconfig path didn't change.
-   - [ ] Run `kubectl get pods -A` and verify that the command succeeds. Then create a pod with
-     `kubectl apply -f https://k8s.io/examples/application/shell-demo.yaml` and exec into it with
-     `kubectl exec --stdin --tty shell-demo -- /bin/bash`. Verify that the shell works.
-      - For execing into a pod, you might need to [create a `ClusterRoleBinding` in
-        k8s](https://goteleport.com/docs/kubernetes-access/register-clusters/static-kubeconfig/#kubernetes-authorization)
-        for [the admin role](https://kubernetes.io/docs/reference/access-authn-authz/rbac/#user-facing-roles).
-        Then you need to add the k8s group (which maps to the k8s admin role in
-        `ClusterRoleBinding`) to `kubernetes_groups` of your Teleport role.
-      - [ ] Repeat the above check for a k8s cluster connected to a leaf cluster.
+   - [ ] Run `kubectl get pods` and see if the command succeeds.
    - Verify that the kubeconfig file is removed when the user:
       - [ ] Removes the connection
       - [ ] Logs out of the cluster

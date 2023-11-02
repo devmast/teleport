@@ -626,36 +626,6 @@ var events = map[string]*Event{
 				Type:        "string",
 			},
 			{
-				Name:        "membership_requirements_changed",
-				Description: "is populated if the memrship requirements have changed",
-				Type:        "object",
-				Fields: []*EventField{
-					{
-						Name:        "roles",
-						Description: "are the roles that changed as part of a review",
-						Type:        "array",
-						Items: &EventField{
-							Type: "string",
-						},
-					},
-					{
-						Name:        "traits",
-						Description: "are the traits that changed as part of a review",
-						Type:        "object",
-						Fields: []*EventField{
-							{
-								Name: "key",
-								Type: "string",
-							},
-							{
-								Name: "value",
-								Type: "string",
-							},
-						},
-					},
-				},
-			},
-			{
 				Name:        "message",
 				Description: "is a user-friendly message for successfull or unsuccessfull auth attempt",
 				Type:        "string",
@@ -663,29 +633,6 @@ var events = map[string]*Event{
 			{
 				Name:        "name",
 				Description: "is a resource name",
-				Type:        "string",
-			},
-			{
-				Name:        "removed_members",
-				Description: "are the members that were removed as part of the review",
-				Type:        "array",
-				Items: &EventField{
-					Type: "string",
-				},
-			},
-			{
-				Name:        "review_day_of_month_changed",
-				Description: "is populated if the review day of month has changed",
-				Type:        "string",
-			},
-			{
-				Name:        "review_frequency_changed",
-				Description: "is populated if the review frequency has changed",
-				Type:        "string",
-			},
-			{
-				Name:        "review_id",
-				Description: "is the ID of the review",
 				Type:        "string",
 			},
 			{

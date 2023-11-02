@@ -433,7 +433,7 @@ func (a *Middleware) withAuthenticatedUser(ctx context.Context) (context.Context
 	}
 
 	ctx = authz.ContextWithUserCertificate(ctx, certFromConnState(connState))
-	ctx = authz.ContextWithClientSrcAddr(ctx, peerInfo.Addr)
+	ctx = authz.ContextWithClientAddr(ctx, peerInfo.Addr)
 	ctx = authz.ContextWithUser(ctx, identityGetter)
 
 	return ctx, nil
@@ -686,7 +686,7 @@ func (a *Middleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx = authz.ContextWithUserCertificate(ctx, certFromConnState(r.TLS))
 	clientSrcAddr, err := utils.ParseAddr(remoteAddr)
 	if err == nil {
-		ctx = authz.ContextWithClientSrcAddr(ctx, clientSrcAddr)
+		ctx = authz.ContextWithClientAddr(ctx, clientSrcAddr)
 	}
 	ctx = authz.ContextWithUser(ctx, user)
 	a.Handler.ServeHTTP(w, r.WithContext(ctx))
@@ -715,7 +715,7 @@ func (a *Middleware) WrapContextWithUserFromTLSConnState(ctx context.Context, tl
 	}
 
 	ctx = authz.ContextWithUserCertificate(ctx, certFromConnState(&tlsState))
-	ctx = authz.ContextWithClientSrcAddr(ctx, remoteAddr)
+	ctx = authz.ContextWithClientAddr(ctx, remoteAddr)
 	ctx = authz.ContextWithUser(ctx, user)
 	return ctx, nil
 }
@@ -761,6 +761,7 @@ func ClientCertPool(client AccessCache, clusterName string, caTypes ...types.Cer
 			if err != nil {
 				return nil, 0, trace.Wrap(err)
 			}
+			log.Debugf("ClientCertPool -> %v", CertInfo(cert))
 			pool.AddCert(cert)
 
 			// Each subject in the list gets a separate 2-byte length prefix.
@@ -869,7 +870,7 @@ func (r *ImpersonatorRoundTripper) RoundTrip(req *http.Request) (*http.Response,
 	req.Header.Set(TeleportImpersonateUserHeader, string(b))
 	defer req.Header.Del(TeleportImpersonateUserHeader)
 
-	clientSrcAddr, err := authz.ClientSrcAddrFromContext(req.Context())
+	clientSrcAddr, err := authz.ClientAddrFromContext(req.Context())
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
@@ -909,7 +910,7 @@ func IdentityForwardingHeaders(ctx context.Context, originalHeaders http.Header)
 	headers := originalHeaders.Clone()
 	headers.Set(TeleportImpersonateUserHeader, string(b))
 
-	clientSrcAddr, err := authz.ClientSrcAddrFromContext(ctx)
+	clientSrcAddr, err := authz.ClientAddrFromContext(ctx)
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}

@@ -45,25 +45,17 @@ func TestUpsertDeleteRoleEventsEmitted(t *testing.T) {
 	require.NoError(t, err)
 
 	// Creating a role should emit a RoleCreatedEvent.
-	role, err = p.a.CreateRole(ctx, role)
+	err = p.a.UpsertRole(ctx, role)
 	require.NoError(t, err)
 	require.Equal(t, p.mockEmitter.LastEvent().GetType(), events.RoleCreatedEvent)
 	require.Equal(t, p.mockEmitter.LastEvent().(*apievents.RoleCreate).Name, role.GetName())
 	p.mockEmitter.Reset()
 
-	// Upserting a role should emit a RoleCreatedEvent.
-	role, err = p.a.UpsertRole(ctx, role)
+	// Updating a role should emit a RoleCreatedEvent.
+	err = p.a.UpsertRole(ctx, role)
 	require.NoError(t, err)
 	require.Equal(t, p.mockEmitter.LastEvent().GetType(), events.RoleCreatedEvent)
 	require.Equal(t, p.mockEmitter.LastEvent().(*apievents.RoleCreate).Name, role.GetName())
-	p.mockEmitter.Reset()
-
-	// Updating a role should emit a RoleUpdatedEvent.
-	role.SetLogins(types.Allow, []string{"llama"})
-	role, err = p.a.UpdateRole(ctx, role)
-	require.NoError(t, err)
-	require.Equal(t, p.mockEmitter.LastEvent().GetType(), events.RoleUpdatedEvent)
-	require.Equal(t, p.mockEmitter.LastEvent().(*apievents.RoleUpdate).Name, role.GetName())
 	p.mockEmitter.Reset()
 
 	// Deleting a role should emit a RoleDeletedEvent.
@@ -93,12 +85,12 @@ func TestUpsertDeleteDependentRoles(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create a role and assign it to a user.
-	role, err = p.a.UpsertRole(ctx, role)
+	err = p.a.UpsertRole(ctx, role)
 	require.NoError(t, err)
 	user, err := types.NewUser("test-user")
 	require.NoError(t, err)
 	user.AddRole(role.GetName())
-	_, err = p.a.CreateUser(ctx, user)
+	err = p.a.CreateUser(ctx, user)
 	require.NoError(t, err)
 
 	// Deletion should fail.

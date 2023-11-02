@@ -313,7 +313,7 @@ func (p *Proxy) Serve(ctx context.Context) error {
 	for {
 		clientConn, err := p.cfg.Listener.Accept()
 		if err != nil {
-			if utils.IsOKNetworkError(err) || trace.IsConnectionProblem(err) || ctx.Err() != nil {
+			if utils.IsOKNetworkError(err) || trace.IsConnectionProblem(err) {
 				return nil
 			}
 			return trace.Wrap(err)
@@ -378,7 +378,7 @@ func (p *Proxy) handleConn(ctx context.Context, clientConn net.Conn, defaultOver
 		SNI:  hello.ServerName,
 		ALPN: hello.SupportedProtos,
 	}
-	ctx = authz.ContextWithClientAddrs(ctx, clientConn.RemoteAddr(), clientConn.LocalAddr())
+	ctx = utils.ClientAddrContext(ctx, clientConn.RemoteAddr(), clientConn.LocalAddr())
 
 	if handlerDesc.ForwardTLS {
 		return trace.Wrap(handlerDesc.handle(ctx, conn, connInfo))

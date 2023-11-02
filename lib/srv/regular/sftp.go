@@ -55,9 +55,7 @@ func newSFTPSubsys() (*sftpSubsys, error) {
 	}, nil
 }
 
-func (s *sftpSubsys) Start(ctx context.Context,
-	serverConn *ssh.ServerConn,
-	ch ssh.Channel, req *ssh.Request,
+func (s *sftpSubsys) Start(ctx context.Context, serverConn *ssh.ServerConn, ch ssh.Channel, _ *ssh.Request,
 	serverCtx *srv.ServerContext,
 ) error {
 	// Check that file copying is allowed Node-wide again here in case
@@ -90,14 +88,15 @@ func (s *sftpSubsys) Start(ctx context.Context,
 	defer auditPipeIn.Close()
 
 	// Create child process to handle SFTP connection
-	execRequest, err := srv.NewExecRequest(serverCtx, teleport.SFTPSubsystem)
+	executable, err := os.Executable()
+	if err != nil {
+		return trace.Wrap(err)
+	}
+	execRequest, err := srv.NewExecRequest(serverCtx, executable+" sftp")
 	if err != nil {
 		return trace.Wrap(err)
 	}
 	if err := serverCtx.SetExecRequest(execRequest); err != nil {
-		return trace.Wrap(err)
-	}
-	if err := serverCtx.SetSSHRequest(req); err != nil {
 		return trace.Wrap(err)
 	}
 

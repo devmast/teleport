@@ -167,8 +167,6 @@ const (
 	LoginMethodSAML = "saml"
 	// LoginMethodGithub represents login with Github
 	LoginMethodGithub = "github"
-	// LoginMethodHeadless represents headless login request
-	LoginMethodHeadless = "headless"
 
 	// UserUpdatedEvent is emitted when the user is updated.
 	UserUpdatedEvent = "user.update"
@@ -342,10 +340,8 @@ const (
 	// TCPVersion is the version of TCP (4 or 6).
 	TCPVersion = "version"
 
-	// RoleCreatedEvent fires when role is created or upserted.
+	// RoleCreatedEvent fires when role is created/updated.
 	RoleCreatedEvent = "role.created"
-	// RoleUpdatedEvent fires when role is updated.
-	RoleUpdatedEvent = "role.updated"
 	// RoleDeletedEvent fires when role is deleted.
 	RoleDeletedEvent = "role.deleted"
 
@@ -362,30 +358,24 @@ const (
 	// also known as Join Token. See [types.ProvisionToken].
 	ProvisionTokenCreateEvent = "join_token.create"
 
-	// GithubConnectorCreatedEvent fires when a Github connector is created.
+	// GithubConnectorCreatedEvent fires when a Github connector is created/updated.
 	GithubConnectorCreatedEvent = "github.created"
-	// GithubConnectorUpdatedEvent fires when a Github connector is updated.
-	GithubConnectorUpdatedEvent = "github.updated"
 	// GithubConnectorDeletedEvent fires when a Github connector is deleted.
 	GithubConnectorDeletedEvent = "github.deleted"
-	// OIDCConnectorCreatedEvent fires when OIDC connector is created.
+	// OIDCConnectorCreatedEvent fires when OIDC connector is created/updated.
 	OIDCConnectorCreatedEvent = "oidc.created"
-	// OIDCConnectorUpdatedEvent fires when OIDC connector is updated.
-	OIDCConnectorUpdatedEvent = "oidc.updated"
 	// OIDCConnectorDeletedEvent fires when OIDC connector is deleted.
 	OIDCConnectorDeletedEvent = "oidc.deleted"
-	// SAMLConnectorCreatedEvent fires when SAML connector is created.
+	// SAMLConnectorCreatedEvent fires when SAML connector is created/updated.
 	SAMLConnectorCreatedEvent = "saml.created"
-	// SAMLConnectorUpdatedEvent fires when SAML connector is updated.
-	SAMLConnectorUpdatedEvent = "saml.updated"
 	// SAMLConnectorDeletedEvent fires when SAML connector is deleted.
 	SAMLConnectorDeletedEvent = "saml.deleted"
 
-	// SessionRejectedEvent fires when a user's attempt to create an authenticated
+	// SessionRejected fires when a user's attempt to create an authenticated
 	// session has been rejected due to exceeding a session control limit.
 	SessionRejectedEvent = "session.rejected"
 
-	// SessionConnectEvent is emitted when any ssh connection is made
+	// SessionConnect is emitted when any ssh connection is made
 	SessionConnectEvent = "session.connect"
 
 	// AppCreateEvent is emitted when an application resource is created.

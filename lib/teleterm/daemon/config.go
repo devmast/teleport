@@ -17,35 +17,21 @@ limitations under the License.
 package daemon
 
 import (
-	"context"
-
 	"github.com/gravitational/trace"
-	"github.com/jonboulle/clockwork"
 	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 
-	"github.com/gravitational/teleport/lib/client"
-	"github.com/gravitational/teleport/lib/teleterm/api/uri"
+	"github.com/gravitational/teleport/lib/client/db/dbcmd"
 	"github.com/gravitational/teleport/lib/teleterm/clusters"
+	"github.com/gravitational/teleport/lib/teleterm/cmd"
+	"github.com/gravitational/teleport/lib/teleterm/gateway"
 	"github.com/gravitational/teleport/lib/teleterm/services/connectmycomputer"
 )
 
-// Storage defines an interface for cluster profile storage.
-type Storage interface {
-	clusters.Resolver
-
-	ReadAll() ([]*clusters.Cluster, error)
-	Add(ctx context.Context, webProxyAddress string) (*clusters.Cluster, *client.TeleportClient, error)
-	Remove(ctx context.Context, profileName string) error
-	GetByResourceURI(resourceURI uri.ResourceURI) (*clusters.Cluster, *client.TeleportClient, error)
-}
-
 // Config is the cluster service config
 type Config struct {
-	// Clock is a clock for time-related operations
-	Clock clockwork.Clock
 	// Storage is a storage service that reads/writes to tsh profiles
-	Storage Storage
+	Storage *clusters.Storage
 	// Log is a component logger
 	Log *logrus.Entry
 	// PrehogAddr is the URL where prehog events should be submitted.
@@ -56,7 +42,9 @@ type Config struct {
 	// AgentsDir contains agent config files and data directories for Connect My Computer.
 	AgentsDir string
 
-	GatewayCreator GatewayCreator
+	GatewayCreator         GatewayCreator
+	DBCLICommandProvider   gateway.CLICommandProvider
+	KubeCLICommandProvider gateway.CLICommandProvider
 	// CreateTshdEventsClientCredsFunc lazily creates creds for the tshd events server ran by the
 	// Electron app. This is to ensure that the server public key is written to the disk under the
 	// expected location by the time we get around to creating the client.
@@ -73,10 +61,6 @@ type CreateTshdEventsClientCredsFunc func() (grpc.DialOption, error)
 
 // CheckAndSetDefaults checks the configuration for its validity and sets default values if needed
 func (c *Config) CheckAndSetDefaults() error {
-	if c.Clock == nil {
-		c.Clock = clockwork.NewRealClock()
-	}
-
 	if c.Storage == nil {
 		return trace.BadParameter("missing cluster storage")
 	}
@@ -97,6 +81,14 @@ func (c *Config) CheckAndSetDefaults() error {
 		c.Log = logrus.NewEntry(logrus.StandardLogger()).WithField(trace.Component, "daemon")
 	}
 
+	if c.DBCLICommandProvider == nil {
+		c.DBCLICommandProvider = cmd.NewDBCLICommandProvider(c.Storage, dbcmd.SystemExecer{})
+	}
+
+	if c.KubeCLICommandProvider == nil {
+		c.KubeCLICommandProvider = cmd.NewKubeCLICommandProvider()
+	}
+
 	if c.ConnectMyComputerRoleSetup == nil {
 		roleSetup, err := connectmycomputer.NewRoleSetup(&connectmycomputer.RoleSetupConfig{})
 		if err != nil {
@@ -106,7 +98,7 @@ func (c *Config) CheckAndSetDefaults() error {
 	}
 
 	if c.ConnectMyComputerTokenProvisioner == nil {
-		c.ConnectMyComputerTokenProvisioner = connectmycomputer.NewTokenProvisioner(&connectmycomputer.TokenProvisionerConfig{Clock: c.Clock})
+		c.ConnectMyComputerTokenProvisioner = connectmycomputer.NewTokenProvisioner(&connectmycomputer.TokenProvisionerConfig{Clock: c.Storage.Clock})
 	}
 
 	if c.ConnectMyComputerNodeJoinWait == nil {

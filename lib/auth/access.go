@@ -30,55 +30,10 @@ import (
 	"github.com/gravitational/teleport/lib/events"
 )
 
-// CreateRole creates a role and emits a related audit event.
-func (a *Server) CreateRole(ctx context.Context, role types.Role) (types.Role, error) {
-	created, err := a.Services.CreateRole(ctx, role)
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-
-	if err := a.emitter.EmitAuditEvent(a.closeCtx, &apievents.RoleCreate{
-		Metadata: apievents.Metadata{
-			Type: events.RoleCreatedEvent,
-			Code: events.RoleCreatedCode,
-		},
-		UserMetadata: authz.ClientUserMetadata(ctx),
-		ResourceMetadata: apievents.ResourceMetadata{
-			Name: role.GetName(),
-		},
-	}); err != nil {
-		log.WithError(err).Warnf("Failed to emit role create event.")
-	}
-	return created, nil
-}
-
-// UpdateRole updates a role and emits a related audit event.
-func (a *Server) UpdateRole(ctx context.Context, role types.Role) (types.Role, error) {
-	created, err := a.Services.UpdateRole(ctx, role)
-	if err != nil {
-		return nil, trace.Wrap(err)
-	}
-
-	if err := a.emitter.EmitAuditEvent(a.closeCtx, &apievents.RoleUpdate{
-		Metadata: apievents.Metadata{
-			Type: events.RoleUpdatedEvent,
-			Code: events.RoleUpdatedCode,
-		},
-		UserMetadata: authz.ClientUserMetadata(ctx),
-		ResourceMetadata: apievents.ResourceMetadata{
-			Name: role.GetName(),
-		},
-	}); err != nil {
-		log.WithError(err).Warnf("Failed to emit role create event.")
-	}
-	return created, nil
-}
-
 // UpsertRole creates or updates a role and emits a related audit event.
-func (a *Server) UpsertRole(ctx context.Context, role types.Role) (types.Role, error) {
-	upserted, err := a.Services.UpsertRole(ctx, role)
-	if err != nil {
-		return nil, trace.Wrap(err)
+func (a *Server) UpsertRole(ctx context.Context, role types.Role) error {
+	if err := a.Services.UpsertRole(ctx, role); err != nil {
+		return trace.Wrap(err)
 	}
 
 	if err := a.emitter.EmitAuditEvent(a.closeCtx, &apievents.RoleCreate{
@@ -93,7 +48,7 @@ func (a *Server) UpsertRole(ctx context.Context, role types.Role) (types.Role, e
 	}); err != nil {
 		log.WithError(err).Warnf("Failed to emit role create event.")
 	}
-	return upserted, nil
+	return nil
 }
 
 var (
@@ -105,7 +60,7 @@ var (
 // DeleteRole deletes a role and emits a related audit event.
 func (a *Server) DeleteRole(ctx context.Context, name string) error {
 	// check if this role is used by CA or Users
-	users, err := a.Services.GetUsers(ctx, false)
+	users, err := a.Services.GetUsers(false)
 	if err != nil {
 		return trace.Wrap(err)
 	}

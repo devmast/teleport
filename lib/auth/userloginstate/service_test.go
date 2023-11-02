@@ -258,13 +258,11 @@ func initSvc(t *testing.T) (userContext context.Context, noAccessContext context
 	require.NoError(t, err)
 	user.AddRole(role.GetName())
 
-	user, err = userSvc.CreateUser(ctx, user)
-	require.NoError(t, err)
+	require.NoError(t, userSvc.CreateUser(user))
 
 	noAccessUser, err := types.NewUser(noAccessUser)
 	require.NoError(t, err)
-	noAccessUser, err = userSvc.CreateUser(ctx, noAccessUser)
-	require.NoError(t, err)
+	require.NoError(t, userSvc.CreateUser(noAccessUser))
 
 	storage, err := local.NewUserLoginStateService(backend)
 	require.NoError(t, err)

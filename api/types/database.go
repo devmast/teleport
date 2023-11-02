@@ -128,7 +128,7 @@ type Database interface {
 	// Copy returns a copy of this database resource.
 	Copy() *DatabaseV3
 	// GetAdminUser returns database privileged user information.
-	GetAdminUser() DatabaseAdminUser
+	GetAdminUser() string
 	// SupportsAutoUsers returns true if this database supports automatic
 	// user provisioning.
 	SupportsAutoUsers() bool
@@ -291,23 +291,13 @@ func (d *DatabaseV3) SetURI(uri string) {
 }
 
 // GetAdminUser returns database privileged user information.
-func (d *DatabaseV3) GetAdminUser() (ret DatabaseAdminUser) {
+func (d *DatabaseV3) GetAdminUser() string {
 	// First check the spec.
 	if d.Spec.AdminUser != nil {
-		ret = *d.Spec.AdminUser
+		return d.Spec.AdminUser.Name
 	}
-
 	// If it's not in the spec, check labels (for auto-discovered databases).
-	// TODO Azure will require different labels.
-	if d.Origin() == OriginCloud {
-		if ret.Name == "" {
-			ret.Name = d.Metadata.Labels[DatabaseAdminLabel]
-		}
-		if ret.DefaultDatabase == "" {
-			ret.DefaultDatabase = d.Metadata.Labels[DatabaseAdminDefaultDatabaseLabel]
-		}
-	}
-	return
+	return d.Metadata.Labels[DatabaseAdminLabel]
 }
 
 // GetOracle returns the Oracle options from spec.
@@ -321,7 +311,7 @@ func (d *DatabaseV3) SupportsAutoUsers() bool {
 	switch d.GetProtocol() {
 	case DatabaseProtocolPostgreSQL:
 		switch d.GetType() {
-		case DatabaseTypeSelfHosted, DatabaseTypeRDS, DatabaseTypeRedshift:
+		case DatabaseTypeSelfHosted, DatabaseTypeRDS:
 			return true
 		}
 	case DatabaseProtocolMySQL:
@@ -849,9 +839,9 @@ func (d *DatabaseV3) CheckAndSetDefaults() error {
 			d.GetName())
 	}
 
-	// Admin user should only be specified for databases that support automatic
-	// user provisioning.
-	if d.GetAdminUser().Name != "" && !d.SupportsAutoUsers() {
+	// Admin user (for automatic user provisioning) is only supported for
+	// PostgreSQL currently.
+	if d.GetAdminUser() != "" && !d.SupportsAutoUsers() {
 		return trace.BadParameter("cannot set admin user on database %q: %v/%v databases don't support automatic user provisioning yet",
 			d.GetName(), d.GetProtocol(), d.GetType())
 	}

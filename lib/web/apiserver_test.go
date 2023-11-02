@@ -48,7 +48,6 @@ import (
 
 	"github.com/gogo/protobuf/proto"
 	"github.com/google/go-cmp/cmp"
-	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/gravitational/roundtrip"
@@ -76,7 +75,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
-	"k8s.io/apimachinery/pkg/util/yaml"
 	authztypes "k8s.io/client-go/kubernetes/typed/authorization/v1"
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
@@ -195,12 +193,6 @@ type webSuiteConfig struct {
 
 	// ClusterFeatures allows overriding default auth server features
 	ClusterFeatures *authproto.Features
-
-	// presenceChecker executes presence prompts for tests
-	presenceChecker PresenceChecker
-
-	// clock to use for all server components
-	clock clockwork.FakeClock
 }
 
 func newWebSuiteWithConfig(t *testing.T, cfg webSuiteConfig) *WebSuite {
@@ -211,14 +203,10 @@ func newWebSuiteWithConfig(t *testing.T, cfg webSuiteConfig) *WebSuite {
 	u, err := user.Current()
 	require.NoError(t, err)
 
-	if cfg.clock == nil {
-		cfg.clock = clockwork.NewFakeClock()
-	}
-
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &WebSuite{
 		mockU2F: mockU2F,
-		clock:   cfg.clock,
+		clock:   clockwork.NewFakeClock(),
 		user:    u.Username,
 		ctx:     ctx,
 		cancel:  cancel,
@@ -483,7 +471,6 @@ func newWebSuiteWithConfig(t *testing.T, cfg webSuiteConfig) *WebSuite {
 		HealthCheckAppServer: cfg.HealthCheckAppServer,
 		UI:                   cfg.uiConfig,
 		OpenAIConfig:         cfg.OpenAIConfig,
-		PresenceChecker:      cfg.presenceChecker,
 	}
 
 	if handlerConfig.HealthCheckAppServer == nil {
@@ -714,17 +701,17 @@ func (s *WebSuite) authPackWithMFA(t *testing.T, name string, roles ...types.Rol
 
 	userRole := services.RoleForUser(user)
 	userRole.SetLogins(types.Allow, []string{s.user})
-	userRole, err = s.server.Auth().UpsertRole(s.ctx, userRole)
+	err = s.server.Auth().UpsertRole(s.ctx, userRole)
 	require.NoError(t, err)
 
 	for _, role := range roles {
-		role, err = s.server.Auth().UpsertRole(s.ctx, role)
+		err = s.server.Auth().UpsertRole(s.ctx, role)
 		require.NoError(t, err)
 		user.AddRole(role.GetName())
 	}
 
 	user.AddRole(userRole.GetName())
-	_, err = s.server.Auth().CreateUser(s.ctx, user)
+	err = s.server.Auth().CreateUser(s.ctx, user)
 	require.NoError(t, err)
 
 	clt := s.client(t)
@@ -801,7 +788,7 @@ func (s *WebSuite) createUser(t *testing.T, user string, login string, pass stri
 	options := role.GetOptions()
 	options.ForwardAgent = types.NewBool(true)
 	role.SetOptions(options)
-	role, err = s.server.Auth().UpsertRole(s.ctx, role)
+	err = s.server.Auth().UpsertRole(s.ctx, role)
 	require.NoError(t, err)
 	teleUser.AddRole(role.GetName())
 
@@ -812,7 +799,7 @@ func (s *WebSuite) createUser(t *testing.T, user string, login string, pass stri
 	teleUser.SetCreatedBy(types.CreatedBy{
 		User: types.UserRef{Name: "some-auth-user"},
 	})
-	_, err = s.server.Auth().CreateUser(s.ctx, teleUser)
+	err = s.server.Auth().CreateUser(s.ctx, teleUser)
 	require.NoError(t, err)
 
 	err = s.server.Auth().UpsertPassword(user, []byte(pass))
@@ -2024,22 +2011,20 @@ func TestTerminalRequireSessionMFA(t *testing.T) {
 	ctx := context.Background()
 	env := newWebPack(t, 1)
 	proxy := env.proxies[0]
+	pack := proxy.authPack(t, "llama", nil /* roles */)
 
-	const username = "llama2999"
-	pack := proxy.authPack(t, username, nil /* roles */)
-
-	userClient, err := env.server.NewClient(auth.TestUser(username))
+	clt, err := env.server.NewClient(auth.TestUser("llama"))
 	require.NoError(t, err)
 
 	cases := []struct {
 		name                      string
-		getAuthPreference         func(t *testing.T) types.AuthPreference
-		registerDevice            func(t *testing.T) *auth.TestDevice
-		getChallengeResponseBytes func(t *testing.T, chal *client.MFAAuthenticateChallenge, testDev *auth.TestDevice) []byte
+		getAuthPreference         func() types.AuthPreference
+		registerDevice            func() *auth.TestDevice
+		getChallengeResponseBytes func(chals *client.MFAAuthenticateChallenge, dev *auth.TestDevice) []byte
 	}{
 		{
 			name: "with webauthn",
-			getAuthPreference: func(t *testing.T) types.AuthPreference {
+			getAuthPreference: func() types.AuthPreference {
 				ap, err := types.NewAuthPreference(types.AuthPreferenceSpecV2{
 					Type:         constants.Local,
 					SecondFactor: constants.SecondFactorWebauthn,
@@ -2052,18 +2037,15 @@ func TestTerminalRequireSessionMFA(t *testing.T) {
 
 				return ap
 			},
-			registerDevice: func(t *testing.T) *auth.TestDevice {
-				webauthnDev, err := auth.RegisterTestDevice(
-					ctx,
-					userClient,
-					"webauthn", authproto.DeviceType_DEVICE_TYPE_WEBAUTHN, pack.device /* authenticator */)
+			registerDevice: func() *auth.TestDevice {
+				webauthnDev, err := auth.RegisterTestDevice(ctx, clt, "webauthn", authproto.DeviceType_DEVICE_TYPE_WEBAUTHN, nil /* authenticator */)
 				require.NoError(t, err)
 
 				return webauthnDev
 			},
-			getChallengeResponseBytes: func(t *testing.T, chal *client.MFAAuthenticateChallenge, testDev *auth.TestDevice) []byte {
-				res, err := testDev.SolveAuthn(&authproto.MFAAuthenticateChallenge{
-					WebauthnChallenge: wantypes.CredentialAssertionToProto(chal.WebauthnChallenge),
+			getChallengeResponseBytes: func(chals *client.MFAAuthenticateChallenge, dev *auth.TestDevice) []byte {
+				res, err := dev.SolveAuthn(&authproto.MFAAuthenticateChallenge{
+					WebauthnChallenge: wantypes.CredentialAssertionToProto(chals.WebauthnChallenge),
 				})
 				require.NoError(t, err)
 
@@ -2082,12 +2064,13 @@ func TestTerminalRequireSessionMFA(t *testing.T) {
 			},
 		},
 	}
+
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err = env.server.Auth().SetAuthPreference(ctx, tc.getAuthPreference(t))
+			err = env.server.Auth().SetAuthPreference(ctx, tc.getAuthPreference())
 			require.NoError(t, err)
 
-			dev := tc.registerDevice(t)
+			dev := tc.registerDevice()
 
 			// Open a terminal to a new session.
 			ws, _ := proxy.makeTerminal(t, pack, "")
@@ -2099,12 +2082,12 @@ func TestTerminalRequireSessionMFA(t *testing.T) {
 			var env Envelope
 			require.Nil(t, proto.Unmarshal(raw, &env))
 
-			chal := &client.MFAAuthenticateChallenge{}
-			require.Nil(t, json.Unmarshal([]byte(env.Payload), &chal))
+			chals := &client.MFAAuthenticateChallenge{}
+			require.Nil(t, json.Unmarshal([]byte(env.Payload), &chals))
 
 			// Send response over ws.
 			stream := NewTerminalStream(ctx, ws, utils.NewLoggerForTests())
-			err = stream.ws.WriteMessage(websocket.BinaryMessage, tc.getChallengeResponseBytes(t, chal, dev))
+			err = stream.ws.WriteMessage(websocket.BinaryMessage, tc.getChallengeResponseBytes(chals, dev))
 			require.Nil(t, err)
 
 			// Test we can write.
@@ -3596,8 +3579,7 @@ func TestCheckAccessToRegisteredResource_AccessDenied(t *testing.T) {
 	fooRole, err := env.server.Auth().GetRole(ctx, "user:foo")
 	require.NoError(t, err)
 	fooRole.SetRules(types.Deny, []types.Rule{types.NewRule(types.KindNode, services.RW())})
-	_, err = env.server.Auth().UpsertRole(ctx, fooRole)
-	require.NoError(t, err)
+	require.NoError(t, env.server.Auth().UpsertRole(ctx, fooRole))
 
 	// Direct querying should return a access denied error.
 	endpoint = pack.clt.Endpoint("webapi", "sites", env.server.ClusterName(), "nodes")
@@ -5360,8 +5342,7 @@ func TestChangeUserAuthentication_recoveryCodesReturnedForCloud(t *testing.T) {
 	// Creaet a username that is not a valid email format for recovery.
 	teleUser, err := types.NewUser("invalid-name-for-recovery")
 	require.NoError(t, err)
-	_, err = env.server.Auth().CreateUser(ctx, teleUser)
-	require.NoError(t, err)
+	require.NoError(t, env.server.Auth().CreateUser(ctx, teleUser))
 
 	// Create a reset password token and secrets.
 	resetToken, err := env.server.Auth().CreateResetPasswordToken(ctx, auth.CreateUserTokenRequest{
@@ -5392,8 +5373,7 @@ func TestChangeUserAuthentication_recoveryCodesReturnedForCloud(t *testing.T) {
 	// Create a user that is valid for recovery.
 	teleUser, err = types.NewUser("valid-username@example.com")
 	require.NoError(t, err)
-	_, err = env.server.Auth().CreateUser(ctx, teleUser)
-	require.NoError(t, err)
+	require.NoError(t, env.server.Auth().CreateUser(ctx, teleUser))
 
 	// Create a reset password token and secrets.
 	resetToken, err = env.server.Auth().CreateResetPasswordToken(ctx, auth.CreateUserTokenRequest{
@@ -5453,8 +5433,7 @@ func TestChangeUserAuthentication_WithPrivacyPolicyEnabledError(t *testing.T) {
 	// Create a user that is valid for recovery.
 	teleUser, err := types.NewUser("valid-username@example.com")
 	require.NoError(t, err)
-	_, err = env.server.Auth().CreateUser(ctx, teleUser)
-	require.NoError(t, err)
+	require.NoError(t, env.server.Auth().CreateUser(ctx, teleUser))
 
 	// Create a reset password token and secrets.
 	resetToken, err := env.server.Auth().CreateResetPasswordToken(ctx, auth.CreateUserTokenRequest{
@@ -5578,12 +5557,12 @@ func TestChangeUserAuthentication_settingDefaultClusterAuthPreference(t *testing
 
 			role := services.RoleForUser(user)
 
-			role, err = s.server.Auth().UpsertRole(s.ctx, role)
+			err = s.server.Auth().UpsertRole(s.ctx, role)
 			require.NoError(t, err)
 
 			user.AddRole(role.GetName())
 
-			user, err = s.server.Auth().CreateUser(s.ctx, user)
+			err = s.server.Auth().CreateUser(s.ctx, user)
 			require.NoError(t, err)
 
 			users[i] = user
@@ -5825,8 +5804,7 @@ func TestGetUserOrResetToken(t *testing.T) {
 	teleUser, err := types.NewUser(username)
 	require.NoError(t, err)
 	teleUser.SetLogins([]string{"login1"})
-	_, err = env.server.Auth().CreateUser(ctx, teleUser)
-	require.NoError(t, err)
+	require.NoError(t, env.server.Auth().CreateUser(ctx, teleUser))
 
 	// Create a reset password token and secrets.
 	resetToken, err := env.server.Auth().CreateResetPasswordToken(ctx, auth.CreateUserTokenRequest{
@@ -5843,8 +5821,7 @@ func TestGetUserOrResetToken(t *testing.T) {
 	fooAllowRules := fooRole.GetRules(types.Allow)
 	fooAllowRules = append(fooAllowRules, types.NewRule(types.KindUser, services.RO()))
 	fooRole.SetRules(types.Allow, fooAllowRules)
-	_, err = env.server.Auth().UpsertRole(ctx, fooRole)
-	require.NoError(t, err)
+	require.NoError(t, env.server.Auth().UpsertRole(ctx, fooRole))
 
 	resp, err := pack.clt.Get(ctx, pack.clt.Endpoint("webapi", "users", username), url.Values{})
 	require.NoError(t, err)
@@ -6053,7 +6030,11 @@ func TestDiagnoseSSHConnection(t *testing.T) {
 					Type:    types.ConnectionDiagnosticTrace_CONNECTIVITY,
 					Status:  types.ConnectionDiagnosticTrace_FAILED,
 					Details: `Failed to connect to the Node. Ensure teleport service is running using "systemctl status teleport".`,
-					Error:   "direct dialing to nodes not found in inventory is not supported",
+					Error: `Direct dialing to nodes not found in the inventory is not supported.
+If you want to connect to a node without installing Teleport on it, consider registering it with
+your cluster with 'teleport join openssh'.
+
+See https://goteleport.com/docs/ver/14.x/server-access/guides/openssh/ for more details.`,
 				},
 			},
 		},
@@ -7209,11 +7190,7 @@ func (mock authProviderMock) IsMFARequired(ctx context.Context, req *authproto.I
 	return nil, nil
 }
 
-func (mock authProviderMock) CreateAuthenticateChallenge(ctx context.Context, req *authproto.CreateAuthenticateChallengeRequest) (*authproto.MFAAuthenticateChallenge, error) {
-	return nil, nil
-}
-
-func (mock authProviderMock) GenerateUserCerts(ctx context.Context, req authproto.UserCertsRequest) (*authproto.Certs, error) {
+func (mock authProviderMock) GenerateUserSingleUseCerts(ctx context.Context) (authproto.AuthService_GenerateUserSingleUseCertsClient, error) {
 	return nil, nil
 }
 
@@ -7225,7 +7202,7 @@ func (mock authProviderMock) MaintainSessionPresence(ctx context.Context) (authp
 	return nil, nil
 }
 
-func (mock authProviderMock) GetUser(_ context.Context, _ string, _ bool) (types.User, error) {
+func (mock authProviderMock) GetUser(_ string, _ bool) (types.User, error) {
 	return nil, nil
 }
 
@@ -7329,8 +7306,8 @@ func (s *WebSuite) makeTerminal(t *testing.T, pack *authPack, opts ...terminalOp
 	return ws, &sessResp.Session, nil
 }
 
-func waitForOutputWithDuration(r io.Reader, substr string, timeout time.Duration) error {
-	timeoutCh := time.After(timeout)
+func waitForOutput(r io.Reader, substr string) error {
+	timeoutCh := time.After(10 * time.Second)
 
 	var prev string
 	out := make([]byte, int64(len(substr)*2))
@@ -7359,10 +7336,6 @@ func waitForOutputWithDuration(r io.Reader, substr string, timeout time.Duration
 		}
 		prev = outStr
 	}
-}
-
-func waitForOutput(r io.Reader, substr string) error {
-	return waitForOutputWithDuration(r, substr, 10*time.Second)
 }
 
 func (s *WebSuite) client(t *testing.T, opts ...roundtrip.ClientParam) *TestWebClient {
@@ -8015,9 +7988,6 @@ func (r *testProxy) authPack(t *testing.T, teleportUser string, roles []types.Ro
 		clt:       clt,
 		cookies:   resp.Cookies(),
 		password:  pass,
-		device: &auth.TestDevice{
-			TOTPSecret: otpSecret,
-		},
 	}
 }
 
@@ -8074,7 +8044,7 @@ func (r *testProxy) createUser(ctx context.Context, t *testing.T, user, login, p
 	}
 
 	for _, role := range roles {
-		role, err = r.auth.Auth().UpsertRole(ctx, role)
+		err = r.auth.Auth().UpsertRole(ctx, role)
 		require.NoError(t, err)
 
 		teleUser.AddRole(role.GetName())
@@ -8084,7 +8054,7 @@ func (r *testProxy) createUser(ctx context.Context, t *testing.T, user, login, p
 		User: types.UserRef{Name: "some-auth-user"},
 	})
 
-	_, err = r.auth.Auth().CreateUser(ctx, teleUser)
+	err = r.auth.Auth().CreateUser(ctx, teleUser)
 	require.NoError(t, err)
 
 	err = r.auth.Auth().UpsertPassword(user, []byte(pass))
@@ -8271,7 +8241,7 @@ func TestUserContextWithAccessRequest(t *testing.T) {
 	// Create the requestable role.
 	requestableRole, err := types.NewRole(requestableRolename, types.RoleSpecV6{})
 	require.NoError(t, err)
-	_, err = env.server.Auth().UpsertRole(ctx, requestableRole)
+	err = env.server.Auth().UpsertRole(ctx, requestableRole)
 	require.NoError(t, err)
 
 	identity := tlsca.Identity{
@@ -9271,8 +9241,7 @@ func TestModeratedSession(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	peerRole, err = s.server.Auth().UpsertRole(s.ctx, peerRole)
-	require.NoError(t, err)
+	require.NoError(t, s.server.Auth().UpsertRole(s.ctx, peerRole))
 
 	moderatorRole, err := types.NewRole("moderator", types.RoleSpecV6{
 		Allow: types.RoleConditions{
@@ -9287,8 +9256,7 @@ func TestModeratedSession(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	moderatorRole, err = s.server.Auth().UpsertRole(s.ctx, moderatorRole)
-	require.NoError(t, err)
+	require.NoError(t, s.server.Auth().UpsertRole(s.ctx, moderatorRole))
 
 	peer := s.authPack(t, "foo", peerRole.GetName())
 
@@ -9334,9 +9302,7 @@ func TestModeratedSessionWithMFA(t *testing.T) {
 
 	const RPID = "localhost"
 
-	presenceClock := clockwork.NewFakeClock()
 	s := newWebSuiteWithConfig(t, webSuiteConfig{
-		clock:                     clockwork.NewFakeClockAt(presenceClock.Now()),
 		disableDiskBasedRecording: true,
 		authPreferenceSpec: &types.AuthPreferenceSpecV2{
 			Type:           constants.Local,
@@ -9346,9 +9312,6 @@ func TestModeratedSessionWithMFA(t *testing.T) {
 			Webauthn: &types.Webauthn{
 				RPID: RPID,
 			},
-		},
-		presenceChecker: func(ctx context.Context, term io.Writer, maintainer client.PresenceMaintainer, sessionID string, promptMFA client.PromptMFAFunc, opts ...client.PresenceOption) error {
-			return trace.Wrap(client.RunPresenceTask(ctx, term, maintainer, sessionID, promptMFA, client.WithPresenceClock(presenceClock)))
 		},
 	})
 
@@ -9413,8 +9376,7 @@ func TestModeratedSessionWithMFA(t *testing.T) {
 
 	// run the presence check a few times
 	for i := 0; i < 3; i++ {
-		presenceClock.BlockUntil(1)
-		presenceClock.Advance(30 * time.Second)
+		s.clock.Advance(30 * time.Second)
 		require.NoError(t, waitForOutput(moderatorStream, "Teleport > Please tap your MFA key"))
 
 		challenge, err := moderatorStream.readChallenge(protobufMFACodec{})
@@ -9437,14 +9399,11 @@ func TestModeratedSessionWithMFA(t *testing.T) {
 		require.NoError(t, moderatorWS.WriteMessage(websocket.BinaryMessage, envelopeBytes))
 	}
 
-	// Advance the clock far enough in the future to make the moderator stale
-	// which will terminate the session - because the clock is used by ALL server
-	// components, it's not practical to use BlockUntil here, so we use EventuallyWithT instead.
-	require.EventuallyWithT(t, func(t *assert.CollectT) {
-		s.clock.Advance(3 * time.Minute)
-		assert.NoError(t, waitForOutputWithDuration(moderatorStream, "wait: remote command exited without exit status or exit signal", 3*time.Second))
-		assert.NoError(t, waitForOutputWithDuration(peerStream, "Process exited with status 255", 3*time.Second))
-	}, 15*time.Second, 500*time.Millisecond)
+	// advance the clock far enough in the future to make the moderator stale
+	// which will terminate the session
+	s.clock.Advance(180 * time.Second)
+	require.NoError(t, waitForOutput(moderatorStream, "wait: remote command exited without exit status or exit signal"))
+	require.NoError(t, waitForOutput(peerStream, "Process exited with status 255"))
 }
 
 func handleMFAWebauthnChallenge(t *testing.T, ws *websocket.Conn, dev *auth.TestDevice) {
@@ -9590,109 +9549,4 @@ func Test_consumeTokenForAPICall(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestGithubConnector(t *testing.T) {
-	ctx := context.Background()
-	env := newWebPack(t, 1)
-
-	proxy := env.proxies[0]
-
-	// Authenticate to get a session token and cookies.
-	pack := proxy.authPack(t, "test-user@example.com", nil)
-
-	expected, err := types.NewGithubConnector("github", types.GithubConnectorSpecV3{
-		ClientID:     "12345",
-		ClientSecret: "678910",
-		RedirectURL:  "https://proxy.example.com/v1/webapi/github/callback",
-		Display:      "Github",
-		TeamsToRoles: []types.TeamRolesMapping{
-			{
-				Organization: "acme",
-				Team:         "users",
-				Roles:        []string{"access", "editor", "auditor"},
-			},
-		},
-	})
-	require.NoError(t, err, "creating initial connector resource")
-
-	createPayload := func(connector types.GithubConnector) ui.ResourceItem {
-		raw, err := services.MarshalGithubConnector(connector, services.PreserveResourceID())
-		require.NoError(t, err, "marshaling connector")
-
-		return ui.ResourceItem{
-			Kind:    types.KindGithubConnector,
-			Name:    connector.GetName(),
-			Content: string(raw),
-		}
-	}
-
-	unmarshalResponse := func(resp []byte) types.GithubConnector {
-		var item ui.ResourceItem
-		require.NoError(t, json.Unmarshal(resp, &item), "response from server contained an invalid resource item")
-
-		var conn types.GithubConnectorV3
-		require.NoError(t, yaml.Unmarshal([]byte(item.Content), &conn), "resource item content was not a github connector")
-		return &conn
-	}
-
-	// Create the initial connector.
-	resp, err := pack.clt.PostJSON(ctx, pack.clt.Endpoint("webapi", "github"), createPayload(expected))
-	require.NoError(t, err, "expected creating the initial connector to succeed")
-	require.Equal(t, http.StatusOK, resp.Code(), "unexpected status code creating connector")
-
-	created := unmarshalResponse(resp.Bytes())
-
-	// Validate that creating the connector again fails.
-	resp, err = pack.clt.PostJSON(ctx, pack.clt.Endpoint("webapi", "github"), createPayload(expected))
-	assert.Error(t, err, "expected an error creating a duplicate connector")
-	assert.True(t, trace.IsAlreadyExists(err), "expected an already exists error got %T", err)
-	assert.Equal(t, http.StatusConflict, resp.Code(), "unexpected status code creating duplicate connector")
-
-	// Update the connector.
-	created.SetDisplay("test")
-	resp, err = pack.clt.PutJSON(ctx, pack.clt.Endpoint("webapi", "github", expected.GetName()), createPayload(created))
-	require.NoError(t, err, "unexpected error updating the connector")
-	require.Equal(t, http.StatusOK, resp.Code(), "unexpected status code updating the connector")
-
-	updated := unmarshalResponse(resp.Bytes())
-
-	require.Empty(t, cmp.Diff(created, updated, cmpopts.IgnoreFields(types.Metadata{}, "ID", "Revision", "Namespace"),
-		cmpopts.IgnoreFields(types.GithubConnectorSpecV3{}, "Display", "ClientSecret"),
-	))
-	require.NotEqual(t, expected.GetDisplay(), updated.GetDisplay(), "expected update to modify the display name")
-	require.Equal(t, "test", updated.GetDisplay(), "display name should have been updated to test. got %s", updated.GetDisplay())
-
-	// Validate that a stale revision prevents updates.
-	resp, err = pack.clt.PutJSON(ctx, pack.clt.Endpoint("webapi", "github", expected.GetName()), createPayload(expected))
-	assert.Error(t, err, "expected an error updating a connector with a stale revision")
-	assert.True(t, trace.IsCompareFailed(err), "expected a compare failed error got %T", err)
-	assert.Equal(t, http.StatusPreconditionFailed, resp.Code(), "unexpected status code updating the connector")
-
-	// Validate that renaming the connector prevents updates.
-	updated.SetName(uuid.NewString())
-	resp, err = pack.clt.PutJSON(ctx, pack.clt.Endpoint("webapi", "github", expected.GetName()), createPayload(updated))
-	assert.Error(t, err, "expected and error when renaming a connector")
-	assert.True(t, trace.IsBadParameter(err), "expected a bad parameter error got %T", err)
-	assert.Equal(t, http.StatusBadRequest, resp.Code(), "unexpected status code updating the connector")
-
-	// Validate that updating a nonexistent connector fails.
-	updated.SetName(uuid.NewString())
-	resp, err = pack.clt.PutJSON(ctx, pack.clt.Endpoint("webapi", "github", updated.GetName()), createPayload(updated))
-	assert.Error(t, err, "expected updating a nonexistent connector to fail")
-	assert.True(t, trace.IsCompareFailed(err), "expected a compare failed error got %T", err)
-	assert.Equal(t, http.StatusPreconditionFailed, resp.Code(), "unexpected status code updating the connector")
-
-	// Validate that the connector can be deleted
-	_, err = pack.clt.Delete(ctx, pack.clt.Endpoint("webapi", "github", expected.GetName()))
-	require.NoError(t, err, "unexpected error deleting connector")
-
-	resp, err = pack.clt.Get(ctx, pack.clt.Endpoint("webapi", "github"), nil)
-	assert.NoError(t, err, "unexpected error listing github connectors")
-
-	var item []ui.ResourceItem
-	require.NoError(t, json.Unmarshal(resp.Bytes(), &item), "invalid resource item received")
-
-	assert.Empty(t, item)
-	assert.Equal(t, http.StatusOK, resp.Code(), "unexpected status code getting connectors")
 }

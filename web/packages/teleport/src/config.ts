@@ -66,7 +66,7 @@ const cfg = {
     second_factor: 'off' as Auth2faType,
     authType: 'local' as AuthType,
     preferredLocalMfa: '' as PreferredMfaType,
-    // motd is the message of the day, displayed to users before login.
+    // motd is message of the day, displayed to users before login.
     motd: '',
   },
 
@@ -186,7 +186,6 @@ const cfg = {
     createPrivilegeTokenPath: '/v1/webapi/users/privilege/token',
 
     rolesPath: '/v1/webapi/roles/:name?',
-    presetRolesPath: '/v1/webapi/presetroles',
     githubConnectorsPath: '/v1/webapi/github/:name?',
     trustedClustersPath: '/v1/webapi/trustedcluster/:name?',
 
@@ -680,10 +679,6 @@ const cfg = {
 
   getRolesUrl(name?: string) {
     return generatePath(cfg.api.rolesPath, { name });
-  },
-
-  getPresetRolesUrl() {
-    return cfg.api.presetRolesPath;
   },
 
   getKubernetesUrl(clusterId: string, params: UrlResourcesParams) {

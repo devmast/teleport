@@ -86,9 +86,7 @@ func NewSSHServerHeartbeat(cfg SSHServerHeartbeatConfig) (*HeartbeatV2, error) {
 			go func() {
 				meta, err := inner.getMetadata(ctx)
 				if err != nil {
-					if ctx.Err() == nil {
-						log.Warnf("Failed to get metadata: %v", err)
-					}
+					log.Warnf("Failed to get metadata: %v", err)
 				} else if meta != nil && meta.CloudMetadata != nil {
 					// Set the metadata immediately to give the heartbeat
 					// a chance to use it.

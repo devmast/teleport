@@ -488,10 +488,6 @@ type CLIConf struct {
 
 	// PIVSlot specifies a specific PIV slot to use with hardware key support.
 	PIVSlot string
-
-	// SSHLogDir is the directory to log the output of multiple SSH commands to.
-	// If not set, no logs will be created.
-	SSHLogDir string
 }
 
 // Stdout returns the stdout writer.
@@ -727,7 +723,6 @@ func Run(ctx context.Context, args []string, opts ...CliOption) error {
 	ssh.Flag("participant-req", "Displays a verbose list of required participants in a moderated session.").BoolVar(&cf.displayParticipantRequirements)
 	ssh.Flag("request-reason", "Reason for requesting access").StringVar(&cf.RequestReason)
 	ssh.Flag("disable-access-request", "Disable automatic resource access requests").BoolVar(&cf.disableAccessRequest)
-	ssh.Flag("log-dir", "Directory to log separated command output, when executing on multiple nodes. If set, output from each node will also be labeled in the terminal.").StringVar(&cf.SSHLogDir)
 
 	// Daemon service for teleterm client
 	daemon := app.Command("daemon", "Daemon is the tsh daemon service.").Hidden()
@@ -2069,7 +2064,7 @@ func onLogin(cf *CLIConf) error {
 func onLogout(cf *CLIConf) error {
 	// Extract all clusters the user is currently logged into.
 	active, available, err := cf.FullProfileStatus()
-	if err != nil && !trace.IsCompareFailed(err) {
+	if err != nil {
 		if trace.IsNotFound(err) {
 			fmt.Printf("All users logged out.\n")
 			return nil
@@ -2100,7 +2095,7 @@ func onLogout(cf *CLIConf) error {
 
 		// Load profile for the requested proxy/user.
 		profile, err := tc.ProfileStatus()
-		if err != nil && !trace.IsNotFound(err) && !trace.IsCompareFailed(err) {
+		if err != nil && !trace.IsNotFound(err) {
 			return trace.Wrap(err)
 		}
 
@@ -3428,7 +3423,7 @@ func makeClientForProxy(cf *CLIConf, proxy string) (*client.TeleportClient, erro
 	profile, profileError := c.GetProfile(c.ClientStore, proxy)
 	if profileError == nil {
 		if err := tc.LoadKeyForCluster(ctx, profile.SiteName); err != nil {
-			if !trace.IsNotFound(err) && !trace.IsConnectionProblem(err) && !trace.IsCompareFailed(err) {
+			if !trace.IsNotFound(err) && !trace.IsConnectionProblem(err) {
 				return nil, trace.Wrap(err)
 			}
 			log.WithError(err).Infof("Could not load key for %s into the local agent.", cf.SiteName)
@@ -3789,7 +3784,6 @@ func loadClientConfigFromCLIConf(cf *CLIConf, proxy string) (*client.Config, err
 	c.Reason = cf.Reason
 	c.Invited = cf.Invited
 	c.DisplayParticipantRequirements = cf.displayParticipantRequirements
-	c.SSHLogDir = cf.SSHLogDir
 	return c, nil
 }
 

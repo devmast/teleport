@@ -112,13 +112,14 @@ func TestAccessSnowflake(t *testing.T) {
 			err:          "HTTP: 401",
 		},
 		{
-			desc:         "database name access is not enforced",
+			desc:         "no access to databases",
 			user:         "alice",
 			role:         "admin",
 			allowDbNames: []string{},
 			allowDbUsers: []string{types.Wildcard},
 			dbName:       "snowflake",
 			dbUser:       "snowflake",
+			err:          "HTTP: 401",
 		},
 		{
 			desc:         "no access to users",

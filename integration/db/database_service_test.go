@@ -67,8 +67,7 @@ func TestDatabaseServiceHeartbeat(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	roleWithRODBService, err = authServer.UpsertRole(ctx, roleWithRODBService)
-	require.NoError(t, err)
+	require.NoError(t, authServer.UpsertRole(ctx, roleWithRODBService))
 
 	// Set up User
 	teleportUser := "user123"
@@ -76,8 +75,7 @@ func TestDatabaseServiceHeartbeat(t *testing.T) {
 	require.NoError(t, err)
 
 	user.AddRole(roleWithRODBService.GetName())
-	_, err = authServer.UpsertUser(ctx, user)
-	require.NoError(t, err)
+	require.NoError(t, authServer.UpsertUser(user))
 
 	userPassword := uuid.NewString()
 	require.NoError(t, authServer.UpsertPassword(teleportUser, []byte(userPassword)))

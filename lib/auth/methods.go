@@ -137,7 +137,7 @@ func (a *Server) AuthenticateUser(ctx context.Context, req AuthenticateUserReque
 		username = actualUsername
 	}
 
-	user, err := a.GetUser(ctx, username, false /* withSecrets */)
+	user, err := a.GetUser(username, false /* withSecrets */)
 	if err != nil {
 		return nil, nil, trace.Wrap(err)
 	}
@@ -314,7 +314,7 @@ func (a *Server) authenticateUser(ctx context.Context, req AuthenticateUserReque
 	}
 	if authenticateFn != nil {
 		var dev *types.MFADevice
-		err := a.WithUserLock(ctx, user, func() error {
+		err := a.WithUserLock(user, func() error {
 			var err error
 			dev, err = authenticateFn()
 			return err
@@ -370,7 +370,7 @@ func (a *Server) authenticateUser(ctx context.Context, req AuthenticateUserReque
 		log.Warningf("MFA bypass attempt by user %q, access denied.", user)
 		return nil, "", trace.AccessDenied("missing second factor")
 	}
-	if err = a.WithUserLock(ctx, user, func() error {
+	if err = a.WithUserLock(user, func() error {
 		return a.checkPasswordWOToken(user, req.Pass.Password)
 	}); err != nil {
 		if fieldErr := getErrorByTraceField(err); fieldErr != nil {
@@ -399,7 +399,7 @@ func (a *Server) authenticatePasswordless(ctx context.Context, req AuthenticateU
 	// A distinction between passwordless and "plain" MFA is that we can't
 	// acquire the user lock beforehand (or at all on failures!)
 	// We do grab it here so successful logins go through the regular process.
-	if err := a.WithUserLock(ctx, user, func() error { return nil }); err != nil {
+	if err := a.WithUserLock(user, func() error { return nil }); err != nil {
 		log.Debugf("WithUserLock for user %q failed during passwordless authentication: %v", user, err)
 		return nil, user, trace.Wrap(authenticateWebauthnError)
 	}
@@ -437,8 +437,6 @@ func (a *Server) authenticateHeadless(ctx context.Context, req AuthenticateUserR
 	if err := services.ValidateHeadlessAuthentication(ha); err != nil {
 		return nil, trace.Wrap(err)
 	}
-
-	emitHeadlessLoginEvent(ctx, events.UserHeadlessLoginRequestedCode, a.emitter, ha, nil)
 
 	// Headless authentication requests are made without any prior authentication. To avoid DDos
 	// attacks on the Auth server's backend, we don't create the headless authentication in the

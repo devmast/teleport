@@ -1,7 +1,5 @@
-ARG BASE_IMAGE=gcr.io/distroless/cc-debian12
-
 # BUILDPLATFORM is provided by Docker/buildx
-FROM --platform=$BUILDPLATFORM docker.io/debian:12 as builder
+FROM --platform=$BUILDPLATFORM docker.io/debian:11 as builder
 ARG BUILDARCH
 
 ## Install dependencies.
@@ -79,7 +77,7 @@ RUN echo "Targeting $TARGETOS/$TARGETARCH with CC=$COMPILER_NAME" && \
 
 # Create the image with the build operator on the $TARGETPLATFORM
 # TARGETPLATFORM is provided by Docker/buildx
-FROM --platform=$TARGETPLATFORM $BASE_IMAGE
+FROM --platform=$TARGETPLATFORM gcr.io/distroless/cc
 WORKDIR /
 COPY --from=builder /go/bin/teleport-operator .
 
