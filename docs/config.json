@@ -21,36 +21,32 @@
 	  "slug": "/upgrading/",
 	  "entries": [
 	    {
-	      "title": "Upgrading Compatibility Overview",
+	      "title": "Compatibility Overview",
 	      "slug": "/upgrading/overview/"
-	    },
-	    {
-	      "title": "Teleport Cluster Upgrades (Linux)",
-	      "slug": "/upgrading/auth-proxy-linux/",
-	      "forScopes": ["oss", "enterprise"]
-	    },
-	    {
-	      "title": "Teleport Cluster Upgrades (Kubernetes)",
-	      "slug": "/upgrading/auth-proxy-helm/",
-	      "forScopes": ["oss", "enterprise"]
 	    },
             {
               "title": "Deploying Automatic Upgrade Infrastructure",
               "slug": "/upgrading/self-hosted-automatic-agent-updates/",
               "forScopes": ["enterprise"]
             },
-            {
-              "title": "Enrolling Agents in Automatic Upgrades",
-              "slug": "/upgrading/enroll-agent-into-automatic-updates/",
-              "forScopes": ["enterprise", "cloud", "team"]
-            },
 	    {
-	      "title": "Manual Agent Upgrades (Linux)",
-	      "slug": "/upgrading/agents-linux/"
+	      "title": "Teleport Cloud (Linux)",
+	      "slug": "/upgrading/cloud-linux/",
+	      "forScopes": ["cloud"]
 	    },
 	    {
-	      "title": "Manual Agent Upgrades (Kubernetes)",
-	      "slug": "/upgrading/agents-helm/"
+	      "title": "Teleport Cloud (Kubernetes)",
+	      "slug": "/upgrading/cloud-kubernetes/",
+	      "forScopes": ["cloud"]
+	    },
+            {
+              "title": "Self-Hosted Teleport (Linux)",
+              "slug": "/upgrading/self-hosted-linux/",
+              "forScopes": ["enterprise", "oss"]
+            },
+	    {
+	      "title": "Self-Hosted Teleport (Kubernetes)",
+	      "slug": "/upgrading/self-hosted-kubernetes/"
 	    }
 	  ]
 	},
@@ -2992,7 +2988,7 @@
     },
     {
       "source": "/management/operations/enroll-agent-into-automatic-updates/",
-      "destination": "/upgrading/enroll-agent-into-automatic-updates/",
+      "destination": "/upgrading/",
       "permanent": true
     },
     {
