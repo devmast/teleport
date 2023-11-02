@@ -164,7 +164,7 @@ func (a *App) init(ctx context.Context) error {
 
 	log.Debug("Starting API health check...")
 	if err = a.serviceNow.CheckHealth(ctx); err != nil {
-		return trace.Wrap(err, "API health check failed" )
+		return trace.Wrap(err, "API health check failed")
 	}
 	log.Debug("API health check finished ok")
 
@@ -270,7 +270,7 @@ func (a *App) onPendingRequest(ctx context.Context, req types.AccessRequest) err
 	}
 
 	log.Infof("Creating servicenow incident for : %v", reqID)
-	if err = a.createIncident(ctx,reqID, reqData); err != nil {
+	if err = a.createIncident(ctx, reqID, reqData); err != nil {
 		return trace.Wrap(err, "creating ServiceNow incident")
 	}
 
