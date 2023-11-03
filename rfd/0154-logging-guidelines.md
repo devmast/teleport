@@ -157,14 +157,25 @@ then a logger should be created via `With("error", err)`.
 
 ### Best Practices
 
-1) If many log lines share a common attribute, use a `slog.With` to construct a `slog.Logger` with that attribute. This
-   allows it to only be formatted once instead of every time a log is emitted.
-1) If an attribute is only emitted in a single log entry, prefer passing it as an attribute instead of
-   calling `slog.With`.
-1) Arguments to a logging function are always evaluated, even if the log event is discarded due to configured verbosity.
-   If the object implements `fmt.Stringer` you can pass it by pointer and the `String` method will only be called when
-   the log is being written. Another option is to implement
-   the [`slog.LogValuer`](https://pkg.go.dev/log/slog@master#LogValuer) interface.
+If many log lines share a common attribute, use a `slog.With` to construct a `slog.Logger` with that attribute. This
+allows it to only be formatted once instead of every time a log is emitted.
+
+If an attribute is only emitted in a single log entry, prefer passing it as an attribute instead of
+calling `slog.With`.
+
+Arguments to a logging function are always evaluated, even if the log event is discarded due to configured verbosity.
+If the object implements `fmt.Stringer` you can pass it by pointer and the `String` method will only be called when
+the log is being written. Another option is to implement
+the [`slog.LogValuer`](https://pkg.go.dev/log/slog@master#LogValuer) interface.
+
+For high volume log messages prefer to use `slog.Logger.LogAttrs`. While the API is more verbose, it avoids any
+allocations, making it the most efficient way to produce output. The example below illustrates how to convert a
+message using `Info` to `LogAttrs`.
+
+```go
+slog.Info("Speed threshold reached", "flux_capacitors_charged", true, "operator", "doc brown")
+slog.LogAttrs(ctx, slog.LevelInfo, "Speed threshold reached", slog.Bool("flux_capacitors_charged", true), slog.String("operator", "doc brown"))
+```
 
 ### Logging Standards
 
