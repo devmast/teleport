@@ -16,7 +16,6 @@ package resume
 
 import (
 	"bufio"
-	"context"
 	"encoding/binary"
 	"io"
 	"net"
@@ -37,18 +36,20 @@ const (
 )
 
 func NewConn(localAddr, remoteAddr net.Addr) *Conn {
-	return &Conn{
+	c := &Conn{
 		localAddr:  localAddr,
 		remoteAddr: remoteAddr,
 
 		receive: window{data: make([]byte, 4096)},
 		replay:  window{data: make([]byte, 4096)},
 	}
+	c.cond.L = &c.mu
+	return c
 }
 
 type Conn struct {
 	mu   sync.Mutex
-	cond chan struct{}
+	cond sync.Cond
 
 	localAddr    net.Addr
 	remoteAddr   net.Addr
@@ -58,54 +59,14 @@ type Conn struct {
 	// current is set iff the Conn is attached; it's cleared at the end of run()
 	current io.Closer
 
-	readTimeout      bool
-	readDeadline     time.Time
-	readTimer        *time.Timer
-	readTimerStopped bool
-
-	writeTimeout      bool
-	writeDeadline     time.Time
-	writeTimer        *time.Timer
-	writeTimerStopped bool
+	readDeadline  deadline
+	writeDeadline deadline
 
 	receive window
 	replay  window
 }
 
 var _ net.Conn = (*Conn)(nil)
-
-func (c *Conn) broadcastLocked() {
-	if c.cond == nil {
-		return
-	}
-	close(c.cond)
-	c.cond = nil
-}
-
-func (c *Conn) waitLocked() {
-	if c.cond == nil {
-		c.cond = make(chan struct{})
-	}
-	cond := c.cond
-	c.mu.Unlock()
-	defer c.mu.Lock()
-	<-cond
-}
-
-func (c *Conn) waitLockedContext(ctx context.Context) error {
-	if c.cond == nil {
-		c.cond = make(chan struct{})
-	}
-	cond := c.cond
-	c.mu.Unlock()
-	defer c.mu.Lock()
-	select {
-	case <-cond:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}
 
 func (c *Conn) AllowRoaming() {
 	c.mu.Lock()
@@ -157,7 +118,7 @@ func (c *Conn) Attach(nc net.Conn, new bool) (detached chan error) {
 	c.remoteAddr = remoteAddr
 
 	c.current = nc
-	c.broadcastLocked()
+	c.cond.Broadcast()
 	go func() {
 		detached <- c.run(nc, new)
 	}()
@@ -168,7 +129,7 @@ func (c *Conn) Attach(nc net.Conn, new bool) (detached chan error) {
 func (c *Conn) detachLocked() {
 	for c.current != nil {
 		c.current.Close()
-		c.waitLocked()
+		c.cond.Wait()
 	}
 }
 
@@ -189,7 +150,7 @@ func (c *Conn) run(nc net.Conn, firstRun bool) error {
 		c.mu.Lock()
 		defer c.mu.Unlock()
 		c.current = nil
-		c.broadcastLocked()
+		c.cond.Broadcast()
 	}()
 	defer nc.Close()
 
@@ -208,8 +169,9 @@ func (c *Conn) run(nc net.Conn, firstRun bool) error {
 
 	var peerReceivePosition uint64
 
+	varintBuf := make([]byte, 0, 2*binary.MaxVarintLen64)
 	if !firstRun {
-		if _, err := nc.Write(binary.AppendUvarint(nil, sentReceivePosition)); err != nil {
+		if _, err := nc.Write(binary.AppendUvarint(varintBuf, sentReceivePosition)); err != nil {
 			return trace.ConnectionProblem(err, "writing position during handshake: %v", err)
 		}
 
@@ -228,7 +190,7 @@ func (c *Conn) run(nc net.Conn, firstRun bool) error {
 		}
 		if c.replay.Start() != peerReceivePosition {
 			c.replay.Advance(peerReceivePosition - c.replay.Start())
-			c.broadcastLocked()
+			c.cond.Broadcast()
 		}
 		c.mu.Unlock()
 
@@ -237,9 +199,19 @@ func (c *Conn) run(nc net.Conn, firstRun bool) error {
 		logrus.Error("first run, skipped handshake")
 	}
 
-	eg, ctx := errgroup.WithContext(context.Background())
+	var eg errgroup.Group
+	var done bool
 
 	eg.Go(func() error {
+		defer func() {
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			if done {
+				return
+			}
+			done = true
+			c.cond.Broadcast()
+		}()
 		defer nc.Close()
 
 		for {
@@ -260,7 +232,7 @@ func (c *Conn) run(nc net.Conn, firstRun bool) error {
 					return trace.BadParameter("ack past end of replay buffer (got %v, len %v)", ack, replayLen)
 				}
 				c.replay.Advance(ack)
-				c.broadcastLocked()
+				c.cond.Broadcast()
 
 				c.mu.Unlock()
 			}
@@ -277,7 +249,8 @@ func (c *Conn) run(nc net.Conn, firstRun bool) error {
 			c.mu.Lock()
 			for frameSize > 0 {
 				for c.receive.Len() >= readBufferSize {
-					if err := c.waitLockedContext(ctx); err != nil {
+					c.cond.Wait()
+					if done {
 						c.mu.Unlock()
 						return err
 					}
@@ -294,7 +267,7 @@ func (c *Conn) run(nc net.Conn, firstRun bool) error {
 				if n > 0 {
 					c.receive.Append(receiveTail[:n])
 					frameSize -= uint64(n)
-					c.broadcastLocked()
+					c.cond.Broadcast()
 				}
 
 				if err != nil {
@@ -307,6 +280,15 @@ func (c *Conn) run(nc net.Conn, firstRun bool) error {
 	})
 
 	eg.Go(func() error {
+		defer func() {
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			if done {
+				return
+			}
+			done = true
+			c.cond.Broadcast()
+		}()
 		defer nc.Close()
 		for {
 			var sendAck uint64
@@ -331,14 +313,15 @@ func (c *Conn) run(nc net.Conn, firstRun bool) error {
 				if len(sendBuf) > 0 || sendAck > 0 {
 					break
 				}
-				if err := c.waitLockedContext(ctx); err != nil {
+				c.cond.Wait()
+				if done {
 					c.mu.Unlock()
-					return err
+					return nil
 				}
 			}
 			c.mu.Unlock()
 
-			hdrBuf := binary.AppendUvarint(nil, sendAck)
+			hdrBuf := binary.AppendUvarint(varintBuf, sendAck)
 			hdrBuf = binary.AppendUvarint(hdrBuf, len64(sendBuf))
 			if _, err := nc.Write(hdrBuf); err != nil {
 				return trace.ConnectionProblem(err, "writing frame header: %v", err)
@@ -371,7 +354,7 @@ func (c *Conn) Close() error {
 	}
 
 	c.closed = true
-	c.broadcastLocked()
+	c.cond.Broadcast()
 
 	return nil
 }
@@ -399,8 +382,8 @@ func (c *Conn) SetDeadline(t time.Time) error {
 		return net.ErrClosed
 	}
 
-	c.setReadDeadlineLocked(t)
-	c.setWriteDeadlineLocked(t)
+	c.readDeadline.SetDeadlineLocked(t, &c.cond)
+	c.writeDeadline.SetDeadlineLocked(t, &c.cond)
 
 	return nil
 }
@@ -414,7 +397,7 @@ func (c *Conn) SetReadDeadline(t time.Time) error {
 		return net.ErrClosed
 	}
 
-	c.setReadDeadlineLocked(t)
+	c.readDeadline.SetDeadlineLocked(t, &c.cond)
 
 	return nil
 }
@@ -428,109 +411,9 @@ func (c *Conn) SetWriteDeadline(t time.Time) error {
 		return net.ErrClosed
 	}
 
-	c.setWriteDeadlineLocked(t)
+	c.writeDeadline.SetDeadlineLocked(t, &c.cond)
 
 	return nil
-}
-
-func (c *Conn) setReadDeadlineLocked(t time.Time) {
-	if t.Equal(c.readDeadline) {
-		return
-	}
-	c.readDeadline = t
-
-	if !c.readTimerStopped && c.readTimer != nil {
-		if !c.readTimer.Stop() && !c.readTimeout {
-			// the timer has fired but the callback hasn't completed yet (it's
-			// likely blocked on the lock which we're holding), so we have to
-			// change c.readTimer to prevent it from setting a timeout that
-			// should no longer be valid
-			c.readTimer = nil
-		} else {
-			c.readTimerStopped = true
-		}
-	}
-
-	if t.IsZero() {
-		c.readTimeout = false
-		return
-	}
-
-	d := time.Until(t)
-
-	if d <= 0 {
-		c.readTimeout = true
-		c.broadcastLocked()
-		return
-	}
-
-	if c.readTimer == nil {
-		thisTimer := new(*time.Timer)
-		c.readTimer = time.AfterFunc(d, func() {
-			c.mu.Lock()
-			defer c.mu.Unlock()
-			if c.readTimer != *thisTimer {
-				return
-			}
-			c.readTimeout = true
-			c.broadcastLocked()
-		})
-		*thisTimer = c.readTimer
-	} else {
-		c.readTimer.Reset(d)
-	}
-
-	c.readTimerStopped = false
-}
-
-func (c *Conn) setWriteDeadlineLocked(t time.Time) {
-	if t.Equal(c.writeDeadline) {
-		return
-	}
-	c.writeDeadline = t
-
-	if !c.writeTimerStopped && c.writeTimer != nil {
-		if !c.writeTimer.Stop() && !c.writeTimeout {
-			// the timer has fired but the callback hasn't completed yet (it's
-			// likely blocked on the lock which we're holding), so we have to
-			// change c.readTimer to prevent it from setting a timeout that
-			// should no longer be valid
-			c.writeTimer = nil
-		} else {
-			c.writeTimerStopped = true
-		}
-	}
-
-	if t.IsZero() {
-		c.writeTimeout = false
-		return
-	}
-
-	d := time.Until(t)
-
-	if d <= 0 {
-		c.writeTimeout = true
-		c.broadcastLocked()
-		return
-	}
-
-	if c.writeTimer == nil {
-		thisTimer := new(*time.Timer)
-		c.writeTimer = time.AfterFunc(d, func() {
-			c.mu.Lock()
-			defer c.mu.Unlock()
-			if c.writeTimer != *thisTimer {
-				return
-			}
-			c.writeTimeout = true
-			c.broadcastLocked()
-		})
-		*thisTimer = c.writeTimer
-	} else {
-		c.writeTimer.Reset(d)
-	}
-
-	c.writeTimerStopped = false
 }
 
 // Read implements [net.Conn].
@@ -543,7 +426,7 @@ func (c *Conn) Read(b []byte) (n int, err error) {
 			return 0, net.ErrClosed
 		}
 
-		if c.readTimeout {
+		if c.readDeadline.TimeoutLocked() {
 			return 0, os.ErrDeadlineExceeded
 		}
 
@@ -551,18 +434,13 @@ func (c *Conn) Read(b []byte) (n int, err error) {
 			return 0, nil
 		}
 
-		if c.receive.Len() > 0 {
-			d1, d2 := c.receive.Data()
-			n := copy(b, d1)
-			if len(b) > n {
-				n += copy(b[n:], d2)
-			}
-			c.receive.Advance(uint64(n))
-			c.broadcastLocked()
+		n := c.receive.Read(b)
+		if n > 0 {
+			c.cond.Broadcast()
 			return n, nil
 		}
 
-		c.waitLocked()
+		c.cond.Wait()
 	}
 }
 
@@ -575,7 +453,7 @@ func (c *Conn) Write(b []byte) (n int, err error) {
 		return 0, net.ErrClosed
 	}
 
-	if c.writeTimeout {
+	if c.writeDeadline.TimeoutLocked() {
 		return 0, os.ErrDeadlineExceeded
 	}
 
@@ -589,20 +467,20 @@ func (c *Conn) Write(b []byte) (n int, err error) {
 			c.replay.Append(b[:s])
 			b = b[s:]
 			n += int(s)
-			c.broadcastLocked()
+			c.cond.Broadcast()
 
 			if len(b) == 0 {
 				return n, nil
 			}
 		}
 
-		c.waitLocked()
+		c.cond.Wait()
 
 		if c.closed {
 			return n, net.ErrClosed
 		}
 
-		if c.writeTimeout {
+		if c.writeDeadline.TimeoutLocked() {
 			return 0, os.ErrDeadlineExceeded
 		}
 	}
@@ -685,4 +563,73 @@ func (w *window) Append(b []byte) {
 func (w *window) Advance(n uint64) {
 	w.start += n
 	w.len -= min(n, w.len)
+}
+
+func (w *window) Read(b []byte) int {
+	d1, d2 := w.Data()
+	n := copy(b, d1)
+	n += copy(b[n:], d2)
+	w.Advance(uint64(n))
+	return n
+}
+
+type deadline struct {
+	timeout  bool
+	deadline time.Time
+	timer    *time.Timer
+	stopped  bool
+}
+
+func (d *deadline) TimeoutLocked() bool {
+	return d.timeout
+}
+
+func (d *deadline) SetDeadlineLocked(t time.Time, cond *sync.Cond) {
+	if t.Equal(d.deadline) {
+		return
+	}
+	d.deadline = t
+
+	if !d.stopped && d.timer != nil {
+		if !d.timer.Stop() && !d.timeout {
+			// the timer has fired but the callback hasn't completed yet (it's
+			// likely blocked on the lock which we're holding), so we have to
+			// change d.timer to prevent it from setting a timeout that should
+			// no longer be valid
+			d.timer = nil
+		} else {
+			d.stopped = true
+		}
+	}
+
+	if t.IsZero() {
+		d.timeout = false
+		return
+	}
+
+	dt := time.Until(t)
+
+	if dt <= 0 {
+		d.timeout = true
+		cond.Broadcast()
+		return
+	}
+
+	if d.timer == nil {
+		thisTimer := new(*time.Timer)
+		d.timer = time.AfterFunc(dt, func() {
+			cond.L.Lock()
+			defer cond.L.Unlock()
+			if d.timer != *thisTimer {
+				return
+			}
+			d.timeout = true
+			cond.Broadcast()
+		})
+		*thisTimer = d.timer
+	} else {
+		d.timer.Reset(dt)
+	}
+
+	d.stopped = false
 }
