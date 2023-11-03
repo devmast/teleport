@@ -40,8 +40,9 @@ func NewConn(localAddr, remoteAddr net.Addr) *Conn {
 	return &Conn{
 		localAddr:  localAddr,
 		remoteAddr: remoteAddr,
-		receive:    window{data: make([]byte, 4096)},
-		replay:     window{data: make([]byte, 4096)},
+
+		receive: window{data: make([]byte, 4096)},
+		replay:  window{data: make([]byte, 4096)},
 	}
 }
 
@@ -57,10 +58,15 @@ type Conn struct {
 	// current is set iff the Conn is attached; it's cleared at the end of run()
 	current io.Closer
 
-	readTimeout  *bool
-	writeTimeout *bool
-	readTimer    *time.Timer
-	writeTimer   *time.Timer
+	readTimeout      bool
+	readDeadline     time.Time
+	readTimer        *time.Timer
+	readTimerStopped bool
+
+	writeTimeout      bool
+	writeDeadline     time.Time
+	writeTimer        *time.Timer
+	writeTimerStopped bool
 
 	receive window
 	replay  window
@@ -384,21 +390,6 @@ func (c *Conn) RemoteAddr() net.Addr {
 	return c.remoteAddr
 }
 
-func deadlineTimer(deadline time.Time, timer *time.Timer) (*time.Timer, <-chan time.Time) {
-	if deadline.IsZero() {
-		return timer, nil
-	}
-	if timer == nil {
-		timer = time.NewTimer(time.Until(deadline))
-	} else {
-		if !timer.Stop() {
-			<-timer.C
-		}
-		timer.Reset(time.Until(deadline))
-	}
-	return timer, timer.C
-}
-
 // SetDeadline implements [net.Conn].
 func (c *Conn) SetDeadline(t time.Time) error {
 	c.mu.Lock()
@@ -408,39 +399,8 @@ func (c *Conn) SetDeadline(t time.Time) error {
 		return net.ErrClosed
 	}
 
-	c.readTimeout = nil
-	if c.readTimer != nil {
-		c.readTimer.Stop()
-		c.readTimer = nil
-	}
-
-	c.writeTimeout = nil
-	if c.writeTimer != nil {
-		c.writeTimer.Stop()
-		c.writeTimer = nil
-	}
-
-	if !t.IsZero() {
-		d := time.Until(t)
-
-		readTimeout := new(bool)
-		c.readTimeout = readTimeout
-		c.readTimer = time.AfterFunc(d, func() {
-			c.mu.Lock()
-			defer c.mu.Unlock()
-			*readTimeout = true
-			c.broadcastLocked()
-		})
-
-		writeTimeout := new(bool)
-		c.writeTimeout = writeTimeout
-		c.writeTimer = time.AfterFunc(d, func() {
-			c.mu.Lock()
-			defer c.mu.Unlock()
-			*writeTimeout = true
-			c.broadcastLocked()
-		})
-	}
+	c.setReadDeadlineLocked(t)
+	c.setWriteDeadlineLocked(t)
 
 	return nil
 }
@@ -454,24 +414,7 @@ func (c *Conn) SetReadDeadline(t time.Time) error {
 		return net.ErrClosed
 	}
 
-	c.readTimeout = nil
-	if c.readTimer != nil {
-		c.readTimer.Stop()
-		c.readTimer = nil
-	}
-
-	if !t.IsZero() {
-		d := time.Until(t)
-
-		readTimeout := new(bool)
-		c.readTimeout = readTimeout
-		c.readTimer = time.AfterFunc(d, func() {
-			c.mu.Lock()
-			defer c.mu.Unlock()
-			*readTimeout = true
-			c.broadcastLocked()
-		})
-	}
+	c.setReadDeadlineLocked(t)
 
 	return nil
 }
@@ -485,26 +428,109 @@ func (c *Conn) SetWriteDeadline(t time.Time) error {
 		return net.ErrClosed
 	}
 
-	c.writeTimeout = nil
-	if c.writeTimer != nil {
-		c.writeTimer.Stop()
-		c.writeTimer = nil
+	c.setWriteDeadlineLocked(t)
+
+	return nil
+}
+
+func (c *Conn) setReadDeadlineLocked(t time.Time) {
+	if t.Equal(c.readDeadline) {
+		return
+	}
+	c.readDeadline = t
+
+	if !c.readTimerStopped && c.readTimer != nil {
+		if !c.readTimer.Stop() && !c.readTimeout {
+			// the timer has fired but the callback hasn't completed yet (it's
+			// likely blocked on the lock which we're holding), so we have to
+			// change c.readTimer to prevent it from setting a timeout that
+			// should no longer be valid
+			c.readTimer = nil
+		} else {
+			c.readTimerStopped = true
+		}
 	}
 
-	if !t.IsZero() {
-		d := time.Until(t)
+	if t.IsZero() {
+		c.readTimeout = false
+		return
+	}
 
-		writeTimeout := new(bool)
-		c.writeTimeout = writeTimeout
+	d := time.Until(t)
+
+	if d <= 0 {
+		c.readTimeout = true
+		c.broadcastLocked()
+		return
+	}
+
+	if c.readTimer == nil {
+		thisTimer := new(*time.Timer)
+		c.readTimer = time.AfterFunc(d, func() {
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			if c.readTimer != *thisTimer {
+				return
+			}
+			c.readTimeout = true
+			c.broadcastLocked()
+		})
+		*thisTimer = c.readTimer
+	} else {
+		c.readTimer.Reset(d)
+	}
+
+	c.readTimerStopped = false
+}
+
+func (c *Conn) setWriteDeadlineLocked(t time.Time) {
+	if t.Equal(c.writeDeadline) {
+		return
+	}
+	c.writeDeadline = t
+
+	if !c.writeTimerStopped && c.writeTimer != nil {
+		if !c.writeTimer.Stop() && !c.writeTimeout {
+			// the timer has fired but the callback hasn't completed yet (it's
+			// likely blocked on the lock which we're holding), so we have to
+			// change c.readTimer to prevent it from setting a timeout that
+			// should no longer be valid
+			c.writeTimer = nil
+		} else {
+			c.writeTimerStopped = true
+		}
+	}
+
+	if t.IsZero() {
+		c.writeTimeout = false
+		return
+	}
+
+	d := time.Until(t)
+
+	if d <= 0 {
+		c.writeTimeout = true
+		c.broadcastLocked()
+		return
+	}
+
+	if c.writeTimer == nil {
+		thisTimer := new(*time.Timer)
 		c.writeTimer = time.AfterFunc(d, func() {
 			c.mu.Lock()
 			defer c.mu.Unlock()
-			*writeTimeout = true
+			if c.writeTimer != *thisTimer {
+				return
+			}
+			c.writeTimeout = true
 			c.broadcastLocked()
 		})
+		*thisTimer = c.writeTimer
+	} else {
+		c.writeTimer.Reset(d)
 	}
 
-	return nil
+	c.writeTimerStopped = false
 }
 
 // Read implements [net.Conn].
@@ -517,7 +543,7 @@ func (c *Conn) Read(b []byte) (n int, err error) {
 			return 0, net.ErrClosed
 		}
 
-		if c.readTimeout != nil && *c.readTimeout {
+		if c.readTimeout {
 			return 0, os.ErrDeadlineExceeded
 		}
 
@@ -549,7 +575,7 @@ func (c *Conn) Write(b []byte) (n int, err error) {
 		return 0, net.ErrClosed
 	}
 
-	if c.writeTimeout != nil && *c.writeTimeout {
+	if c.writeTimeout {
 		return 0, os.ErrDeadlineExceeded
 	}
 
@@ -576,7 +602,7 @@ func (c *Conn) Write(b []byte) (n int, err error) {
 			return n, net.ErrClosed
 		}
 
-		if c.writeTimeout != nil && *c.writeTimeout {
+		if c.writeTimeout {
 			return 0, os.ErrDeadlineExceeded
 		}
 	}
