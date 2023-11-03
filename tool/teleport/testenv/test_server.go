@@ -175,7 +175,7 @@ func MakeTestServer(t *testing.T, opts ...TestServerOptFunc) (process *service.T
 // address as a string (for use in configuration). Takes a pointer to the slice
 // so that it's convenient to call in the middle of a FileConfig or Config
 // struct literal.
-func NewTCPListener(t *testing.T, lt service.ListenerType, fds *[]servicecfg.FileDescriptor) string {
+func NewTCPListener(t *testing.T, lt service.ListenerType, fds *[]*servicecfg.FileDescriptor) string {
 	t.Helper()
 
 	l, err := net.Listen("tcp", "127.0.0.1:0")
@@ -187,6 +187,7 @@ func NewTCPListener(t *testing.T, lt service.ListenerType, fds *[]servicecfg.Fil
 	// the original net.Listener still needs to be closed.
 	lf, err := l.(*net.TCPListener).File()
 	require.NoError(t, err)
+	fd := servicecfg.NewFileDescriptor(string(lt), addr, lf)
 	// If the file descriptor slice ends up being passed to a TeleportProcess
 	// that successfully starts, listeners will either get "imported" and used
 	// or discarded and closed, this is just an extra safety measure that closes
@@ -194,12 +195,7 @@ func NewTCPListener(t *testing.T, lt service.ListenerType, fds *[]servicecfg.Fil
 	// anyway, in principle).
 	t.Cleanup(func() { lf.Close() })
 
-	*fds = append(*fds, servicecfg.FileDescriptor{
-		Type:    string(lt),
-		Address: addr,
-		File:    lf,
-	})
-
+	*fds = append(*fds, fd)
 	return addr
 }
 
