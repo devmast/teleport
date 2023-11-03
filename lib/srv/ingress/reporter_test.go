@@ -41,25 +41,25 @@ func TestIngressReporter(t *testing.T) {
 		authenticatedConnectionsActive.Reset()
 	})
 
-	reporter.ConnectionAccepted(SSH, conn)
+	closed := reporter.ConnectionAccepted(SSH, conn)
 	require.Equal(t, 1, getAcceptedConnections(PathALPN, SSH))
 	require.Equal(t, 1, getActiveConnections(PathALPN, SSH))
 	require.Equal(t, 0, getAuthenticatedAcceptedConnections(PathALPN, SSH))
 	require.Equal(t, 0, getAuthenticatedActiveConnections(PathALPN, SSH))
 
-	reporter.ConnectionClosed(SSH, conn)
+	closed()
 	require.Equal(t, 1, getAcceptedConnections(PathALPN, SSH))
 	require.Equal(t, 0, getActiveConnections(PathALPN, SSH))
 	require.Equal(t, 0, getAuthenticatedAcceptedConnections(PathALPN, SSH))
 	require.Equal(t, 0, getAuthenticatedActiveConnections(PathALPN, SSH))
 
-	reporter.ConnectionAuthenticated(SSH, conn)
+	closed = reporter.ConnectionAuthenticated(SSH, conn)
 	require.Equal(t, 1, getAcceptedConnections(PathALPN, SSH))
 	require.Equal(t, 0, getActiveConnections(PathALPN, SSH))
 	require.Equal(t, 1, getAuthenticatedAcceptedConnections(PathALPN, SSH))
 	require.Equal(t, 1, getAuthenticatedActiveConnections(PathALPN, SSH))
 
-	reporter.AuthenticatedConnectionClosed(SSH, conn)
+	closed()
 	require.Equal(t, 1, getAcceptedConnections(PathALPN, SSH))
 	require.Equal(t, 0, getActiveConnections(PathALPN, SSH))
 	require.Equal(t, 1, getAuthenticatedAcceptedConnections(PathALPN, SSH))
@@ -113,7 +113,7 @@ func getAuthenticatedActiveConnections(path, service string) int {
 }
 
 func getCounterValue(metric *prometheus.CounterVec, path, service string) int {
-	var m = &prommodel.Metric{}
+	m := &prommodel.Metric{}
 	if err := metric.WithLabelValues(path, service).Write(m); err != nil {
 		return 0
 	}
@@ -121,7 +121,7 @@ func getCounterValue(metric *prometheus.CounterVec, path, service string) int {
 }
 
 func getGaugeValue(metric *prometheus.GaugeVec, path, service string) int {
-	var m = &prommodel.Metric{}
+	m := &prommodel.Metric{}
 	if err := metric.WithLabelValues(path, service).Write(m); err != nil {
 		return 0
 	}
@@ -217,7 +217,6 @@ func TestHTTPConnStateReporter(t *testing.T) {
 			require.Equal(t, 0, getActiveConnections(PathDirect, Web))
 			require.Equal(t, tc.authConns, getAuthenticatedAcceptedConnections(PathDirect, Web))
 			require.Equal(t, 0, getAuthenticatedActiveConnections(PathDirect, Web))
-
 		})
 	}
 }

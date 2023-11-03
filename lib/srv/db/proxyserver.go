@@ -312,8 +312,8 @@ func (s *ProxyServer) ServeTLS(listener net.Listener) error {
 
 func (s *ProxyServer) handleConnection(conn net.Conn) error {
 	if s.cfg.IngressReporter != nil {
-		s.cfg.IngressReporter.ConnectionAccepted(ingress.DatabaseTLS, conn)
-		defer s.cfg.IngressReporter.ConnectionClosed(ingress.DatabaseTLS, conn)
+		closed := s.cfg.IngressReporter.ConnectionAccepted(ingress.DatabaseTLS, conn)
+		defer closed()
 	}
 
 	s.log.Debugf("Accepted TLS database connection from %v.", conn.RemoteAddr())
@@ -339,8 +339,8 @@ func (s *ProxyServer) handleConnection(conn net.Conn) error {
 	}
 
 	if s.cfg.IngressReporter != nil {
-		s.cfg.IngressReporter.ConnectionAuthenticated(ingress.DatabaseTLS, conn)
-		defer s.cfg.IngressReporter.AuthenticatedConnectionClosed(ingress.DatabaseTLS, conn)
+		closed := s.cfg.IngressReporter.ConnectionAuthenticated(ingress.DatabaseTLS, conn)
+		defer closed()
 	}
 	if err = enterprise.ProtocolValidation(proxyCtx.Identity.RouteToDatabase.Protocol); err != nil {
 		return trace.Wrap(err)

@@ -466,8 +466,8 @@ func (s *Server) ActiveConnections() int32 {
 // SSH proxy that used when "recording on proxy" is enabled.
 func (s *Server) HandleConnection(conn net.Conn) {
 	if s.ingressReporter != nil {
-		s.ingressReporter.ConnectionAccepted(s.ingressService, conn)
-		defer s.ingressReporter.ConnectionClosed(s.ingressService, conn)
+		closed := s.ingressReporter.ConnectionAccepted(s.ingressService, conn)
+		defer closed()
 	}
 
 	// we need to extract this before any net.Conn wrapper
@@ -511,8 +511,8 @@ func (s *Server) HandleConnection(conn net.Conn) {
 	}
 
 	if s.ingressReporter != nil {
-		s.ingressReporter.ConnectionAuthenticated(s.ingressService, conn)
-		defer s.ingressReporter.AuthenticatedConnectionClosed(s.ingressService, conn)
+		closed := s.ingressReporter.ConnectionAuthenticated(s.ingressService, conn)
+		defer closed()
 	}
 
 	certType := "unknown"

@@ -90,6 +90,8 @@ var (
 // connection metrics for an http server. This only tracks tls connections.
 func HTTPConnStateReporter(service string, r *Reporter) func(net.Conn, http.ConnState) {
 	tracker := &sync.Map{}
+	acceptedClosed := func() {}
+	authenticatedClosed := func() {}
 	return func(conn net.Conn, state http.ConnState) {
 		if r == nil {
 			return
@@ -110,13 +112,14 @@ func HTTPConnStateReporter(service string, r *Reporter) func(net.Conn, http.Conn
 				return
 			}
 
-			r.ConnectionAccepted(service, conn)
+			acceptedClosed = r.ConnectionAccepted(service, conn)
 
 			// Only connections with peer certs are considered authenticated.
 			if len(tlsConn.ConnectionState().PeerCertificates) == 0 {
 				return
 			}
-			r.ConnectionAuthenticated(service, conn)
+
+			authenticatedClosed = r.ConnectionAuthenticated(service, conn)
 		case http.StateClosed, http.StateHijacked:
 			tlsConn, ok := getTLSConn(conn)
 			if !ok {
@@ -129,13 +132,8 @@ func HTTPConnStateReporter(service string, r *Reporter) func(net.Conn, http.Conn
 				return
 			}
 
-			defer r.ConnectionClosed(service, conn)
-
-			// Only connections with peer certs are considered authenticated.
-			if len(tlsConn.ConnectionState().PeerCertificates) == 0 {
-				return
-			}
-			r.AuthenticatedConnectionClosed(service, conn)
+			acceptedClosed()
+			authenticatedClosed()
 		}
 	}
 }
@@ -178,32 +176,22 @@ type Reporter struct {
 	unspecifiedIP bool
 }
 
-// ConnectionAccepted reports a new connection, ConnectionClosed must be called when the connection closes.
-func (r *Reporter) ConnectionAccepted(service string, conn net.Conn) {
+// ConnectionAccepted reports a new connection, the returned function must be
+// called when the connection closes.
+func (r *Reporter) ConnectionAccepted(service string, conn net.Conn) (closed func()) {
 	path := r.getIngressPath(conn)
 	acceptedConnections.WithLabelValues(path, service).Inc()
 	activeConnections.WithLabelValues(path, service).Inc()
+	return func() { activeConnections.WithLabelValues(path, service).Dec() }
 }
 
-// ConnectionClosed reports a closed connection. This should only be called after ConnectionAccepted.
-func (r *Reporter) ConnectionClosed(service string, conn net.Conn) {
-	path := r.getIngressPath(conn)
-	activeConnections.WithLabelValues(path, service).Dec()
-}
-
-// ConnectionAuthenticated reports a new authenticated connection, AuthenticatedConnectionClosed must
-// be called when the connection is closed.
-func (r *Reporter) ConnectionAuthenticated(service string, conn net.Conn) {
+// ConnectionAuthenticated reports a new authenticated connection, the returned
+// function must be called when the connection closes.
+func (r *Reporter) ConnectionAuthenticated(service string, conn net.Conn) (closed func()) {
 	path := r.getIngressPath(conn)
 	authenticatedConnectionsAccepted.WithLabelValues(path, service).Inc()
 	authenticatedConnectionsActive.WithLabelValues(path, service).Inc()
-}
-
-// AuthenticatedConnectionClosed reports a closed authenticated connection, this should only be called
-// after ConnectionAuthenticated.
-func (r *Reporter) AuthenticatedConnectionClosed(service string, conn net.Conn) {
-	path := r.getIngressPath(conn)
-	authenticatedConnectionsActive.WithLabelValues(path, service).Dec()
+	return func() { authenticatedConnectionsActive.WithLabelValues(path, service).Dec() }
 }
 
 // getIngressPath determines the ingress path of a given connection.
