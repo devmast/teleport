@@ -153,8 +153,19 @@ export class FeatureUnifiedResources implements TeleportFeature {
 
   category = NavigationCategory.Resources;
 
-  hasAccess() {
-    return true;
+  hasAccess(flags: FeatureFlags) {
+    // hide if dashboard tenant
+    if (cfg.isDashboard) {
+      return false;
+    }
+    // if the user has access to any of these, show the feature. Otherwise, hide.
+    return (
+      flags.nodes ||
+      flags.applications ||
+      flags.desktops ||
+      flags.kubernetes ||
+      flags.databases
+    );
   }
 }
 

@@ -41,9 +41,31 @@ import AgentButtonAdd from 'teleport/components/AgentButtonAdd';
 import { SearchResource } from 'teleport/Discover/SelectResource';
 import { encodeUrlQueryParams } from 'teleport/components/hooks/useUrlFiltering';
 import Empty, { EmptyStateInfo } from 'teleport/components/Empty';
+import { FeatureFlags } from 'teleport/types';
 
 import { ResourceActionButton } from './ResourceActionButton';
 import SearchPanel from './SearchPanel';
+
+const getAvailableKinds = (flags: FeatureFlags) => {
+  const kinds = [];
+  if (flags.nodes) {
+    kinds.push('node');
+  }
+  if (flags.databases) {
+    kinds.push('db');
+  }
+  if (flags.desktops) {
+    kinds.push('windows_desktop');
+  }
+  if (flags.kubernetes) {
+    kinds.push('kube_cluster');
+  }
+  if (flags.applications) {
+    kinds.push('app');
+  }
+
+  return kinds;
+};
 
 export function UnifiedResources() {
   const { clusterId, isLeafCluster } = useStickyClusterId();
@@ -70,6 +92,8 @@ function ClusterResources({
   isLeafCluster: boolean;
 }) {
   const teleCtx = useTeleport();
+  const flags = teleCtx.getFeatureFlags();
+  const availableKinds = getAvailableKinds(flags);
 
   const pinningNotSupported = localStorage.arePinnedResourcesDisabled();
   const {
@@ -171,13 +195,7 @@ function ClusterResources({
         updateUnifiedResourcesPreferences={preferences => {
           updatePreferences({ unifiedResourcePreferences: preferences });
         }}
-        availableKinds={[
-          'app',
-          'db',
-          'windows_desktop',
-          'kube_cluster',
-          'node',
-        ]}
+        availableKinds={availableKinds}
         Header={pinAllButton => (
           <>
             <FeatureHeader

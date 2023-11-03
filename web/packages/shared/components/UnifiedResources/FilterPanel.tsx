@@ -83,11 +83,18 @@ export function FilterPanel({
         >
           <StyledCheckbox checked={selected} onChange={selectVisible} />
         </HoverTooltip>
-        <FilterTypesMenu
-          onChange={onKindsChanged}
-          availableKinds={availableKinds}
-          kindsFromParams={kinds || []}
-        />
+
+        {/*
+          We hide FilterTypesMenu unless they have access to more than one kind, to prevent them
+          from using a dropdown to select the only kind of resource they access to.
+        */}
+        {availableKinds.length > 1 && (
+          <FilterTypesMenu
+            onChange={onKindsChanged}
+            availableKinds={availableKinds}
+            kindsFromParams={kinds || []}
+          />
+        )}
       </Flex>
       <SortMenu
         onDirChange={onSortOrderButtonClicked}
