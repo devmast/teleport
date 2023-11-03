@@ -105,8 +105,17 @@ automatic upgrades:
    $ ls /etc/yum.repos.d/teleport.repo
    ```
 
-1. If the Teleport repository is not found, add the appropriate repository and
-   reinstall Teleport:
+1. If the repository was added, make sure the Teleport binary installed on the
+   agent can run the automatic upgrader:
+
+   ```code
+   $ which teleport-upgrade || echo "Install the upgrader"
+   Install the upgrader
+   ```
+
+1. If the Teleport repository is not found, or the Teleport binary you installed
+   does not include the upgrader, add the appropriate repository and reinstall
+   Teleport:
 
    (!docs/pages/includes/cloud/install-linux-cloud.mdx!)
 
@@ -139,12 +148,18 @@ automatic upgrades:
    This is expected immediately after install as the maintenance schedule might
    not be exported yet.
 
-If the agent is not automatically updated, you can invoke the updater manually
-and look at its logs:
+1. Ensure that the updater is running:
 
-```code
-$ sudo teleport-upgrade run
-```
+   ```code
+   $ sudo systemctl status teleport-upgrade
+   ```
+
+1. If the agent is not automatically updated, you can invoke the updater
+   manually and look at its logs:
+
+   ```code
+   $ sudo teleport-upgrade run
+   ```
 
 To suspend automatic upgrades, disable the systemd timer:
 
@@ -158,9 +173,3 @@ To enable and start the systemd timer after suspending:
 $ sudo systemctl enable --now teleport-upgrade.timer
 ```
 
-## Manually upgrade agents
-
-You can manually upgrade each agent by adding the appropriate package repository
-and reinstalling Teleport on that agent:
-
-(!docs/pages/includes/cloud/install-linux-cloud.mdx!)
