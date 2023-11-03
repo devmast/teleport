@@ -213,3 +213,66 @@ It is not recommended to backport the changes suggested in this RFD. Only `branc
 which means it is the only branch even capable of using `log/slog`, we could use `x/exp/slog` for the other release
 branches. If this causes an increased number of conflicts when backporting changes to release branches, we can
 reconsider backporting the efforts required to change logging libraries.
+
+### Alternative migration strategies
+
+#### Alternative 1
+
+Provide the `log/slog` API with a wrapped type that used `logrus` under the hood.
+
+```go
+type slogrus struct {
+	wrapped logrus.FieldLogger
+}
+
+// InfoContext here matches slog's InfoContext signature
+func (s *slogrus) InfoContext(ctx context.Context, msg string, args ...any) {
+	s.wrapped.WithFields(convertToFields(args)).Info(msg)
+}
+```
+
+We would slowly migrate all `logrus` callsites to use this new wrapper, and then, upon completion, swap out the wrapper
+for `log/slog`.
+
+Positives:
+
+- Only a single logger implementation actually writing to the output. This reduces concerns about handling concurrent
+  writes, but also simplifies debugging as we will know which implementation wrote a line.
+
+Negatives:
+
+- The conversion wrapper will be more complex than it first seems to write. Ensuring that it remains performant and can
+  handle Attributes/Values properly will be riddled with potential edge cases.
+- Most potential benefits of switching to slog will not be realized until the final cut over, this may make it
+  harder to achieve the buy in from engineers which will be necessary to start migrating.
+- There will be a large time investment to write the wrapper and ensure it works only to throw it away after the
+  migration.
+
+#### Alternative 2
+
+Write a `slog.Handler` that uses a `logrus.Logger` to format and produce output.
+
+```go
+type slogrus struct {
+	wrapped logrus.FieldLogger
+}
+
+func (s *slogrus) WithAttrs(attrs []Attr) Handler {
+	return s.wrapped.WithFields(convertToFields(args))
+}
+
+func (s *slogrus) Handle(_ context.Context, r Record) error {
+	s.wrapped.WithFields(convertRecordToFields(r)).Log(convertLevel(r.Level), r.Message)
+	return nil
+}
+```
+
+Positives:
+
+- Like with option 1, only a single logger implementation is writing messages to the output.
+
+Negatives:
+
+- There will be a large time investment to write the handler and ensure it works only to throw it away after the
+  migration.
+- A handler which doesn't use logrus, but still produces the same output format as logrus will still need to be written.
