@@ -38,18 +38,27 @@ how agent updating works. Automatic agent upgrades require:
   ```
 
 - At least one Teleport Enterprise agent, started via systemd on a distribution
-  using the `apt` or `yum` package managers.
+  using the `apt` or `yum` package managers. The agent must be running one major
+  version below the Auth Service version. 
+
+  So you can access each agent, we assume that each agent runs the Teleport SSH
+  Service in addition to any other services. See the [Deploy Teleport Agents
+  with Terraform](../agents/deploy-agents-terraform.mdx] guide for an example.
 
 ## Step 1/2. Find agents to upgrade
 
-You can find agents that need to be enrolled using `tctl inventory ls` like so:
+To list agents that are not enrolled in automatic upgrades, use the `tctl
+inventory ls` command with the `--upgrader=none` flag. This command also uses
+the `--services` flag to constrain the search to Teleport processes running
+agent services:
 
 ```code
-$ tctl inventory ls --upgrader=none
-Server ID                            Hostname          Services Version Upgrader
------------------------------------- ----------------- -------- ------- --------
-4fb2d97d-884a-4566-b477-c805d477df09 agent.example.com Node     v1.2.3  none
-...
+$ tctl inventory ls \
+  --services=node,kube,db,app,windows_desktop,discovery,okta \
+  --upgrader=none
+Server ID                            Hostname      Services Version Upgrader
+------------------------------------ ------------- -------- ------- --------
+00000000-0000-0000-0000-000000000000 ip-10-1-6-130 Node     v13.4.5 none
 ```
 
 If you have a lot of agents on different versions and want to prioritize enrolling
@@ -59,9 +68,26 @@ your oldest agents, you can limit your search using the `--older-than` filter:
 $ tctl inventory ls --upgrader=none --older-than=v1.2.3
 Server ID                            Hostname        Services Version Upgrader
 ------------------------------------ --------------- -------- ------- --------
-1e6578b6-9530-448e-8013-d32641324abb old.example.com Node     v1.1.1  none
+00000000-0000-0000-0000-000000000000 old.example.com Node     v1.1.1  none
 ...
 ```
+
+When you enroll each agent in automatic upgrades in the next section, you can
+run the following commands to fetch the hostname for each agent and access it
+via Teleport. 
+
+For each agent ID returned by the `tctl inventory ls` command, copy the ID and
+run the following `tctl` command to get the agent's host name and access the
+host via `tsh`:
+
+```code
+$ HOST=00000000-0000-0000-0000-000000000000
+$ USER=root
+$ tsh ssh ${USER?}@$(tctl get node/${HOST?} --format json | jq -r '.[0].spec.hostname')
+```
+
+You can then follow the steps in the next section on each agent to enroll it in
+automatic upgrades.
 
 ## Step 2/2. Enroll agents in automatic upgrades
 
@@ -71,7 +97,7 @@ automatic upgrades:
 1. Ensure the Teleport repository is added and Teleport Enterprise is installed.
 
    To verify if the Teleport repository was added to the system, check if either of
-   the follow files exist:
+   the follow files exists:
    
    ```code
    $ ls /etc/apt/sources.list.d/teleport.list
