@@ -76,19 +76,14 @@ func (c *Conn) broadcastLocked() {
 	c.cond = nil
 }
 
-func (c *Conn) waitLocked(timeoutC <-chan time.Time) (timeout bool) {
+func (c *Conn) waitLocked() {
 	if c.cond == nil {
 		c.cond = make(chan struct{})
 	}
 	cond := c.cond
 	c.mu.Unlock()
 	defer c.mu.Lock()
-	select {
-	case <-cond:
-		return false
-	case <-timeoutC:
-		return true
-	}
+	<-cond
 }
 
 func (c *Conn) waitLockedContext(ctx context.Context) error {
@@ -167,7 +162,7 @@ func (c *Conn) Attach(nc net.Conn, new bool) (detached chan error) {
 func (c *Conn) detachLocked() {
 	for c.current != nil {
 		c.current.Close()
-		c.waitLocked(nil)
+		c.waitLocked()
 	}
 }
 
@@ -541,7 +536,7 @@ func (c *Conn) Read(b []byte) (n int, err error) {
 			return n, nil
 		}
 
-		c.waitLocked(nil)
+		c.waitLocked()
 	}
 }
 
@@ -575,7 +570,7 @@ func (c *Conn) Write(b []byte) (n int, err error) {
 			}
 		}
 
-		c.waitLocked(nil)
+		c.waitLocked()
 
 		if c.closed {
 			return n, net.ErrClosed
