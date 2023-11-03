@@ -18,13 +18,13 @@ package mfa
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/gravitational/trace"
-	"github.com/sirupsen/logrus"
 
-	"github.com/gravitational/teleport"
 	"github.com/gravitational/teleport/api/client/proto"
 	wancli "github.com/gravitational/teleport/lib/auth/webauthncli"
 	wantypes "github.com/gravitational/teleport/lib/auth/webauthntypes"
@@ -71,8 +71,6 @@ type PromptConfig struct {
 	PreferOTP bool
 	// WebauthnSupported indicates whether Webauthn is supported.
 	WebauthnSupported bool
-	// Log is a logging entry.
-	Log *logrus.Entry
 }
 
 // DeviceDescriptor is a descriptor for a device, such as "registered".
@@ -87,9 +85,6 @@ func DefaultPromptConfig(proxyAddr string) *PromptConfig {
 		ProxyAddress:      proxyAddr,
 		WebauthnLoginFunc: wancli.Login,
 		WebauthnSupported: wancli.HasPlatformSupport(),
-		Log: logrus.WithFields(logrus.Fields{
-			trace.Component: teleport.ComponentClient,
-		}),
 	}
 }
 
@@ -172,4 +167,53 @@ func (c PromptConfig) GetWebauthnOrigin() string {
 		return "https://" + c.ProxyAddress
 	}
 	return c.ProxyAddress
+}
+
+// MFAGoroutineResponse is an MFA goroutine response.
+type MFAGoroutineResponse struct {
+	Resp *proto.MFAAuthenticateResponse
+	Err  error
+}
+
+// HandleMFAGoroutines spawns MFA prompt goroutines and returns the first successful response,
+// terminating error, or an aggregated error if they all fail.
+func HandleMFAGoroutines(ctx context.Context, startGoroutines func(context.Context, *sync.WaitGroup, chan<- MFAGoroutineResponse)) (*proto.MFAAuthenticateResponse, error) {
+	respC := make(chan MFAGoroutineResponse, 2)
+	var wg sync.WaitGroup
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer func() {
+		cancel()
+		// wait for all goroutines to complete to ensure there are no leaks.
+		wg.Wait()
+	}()
+
+	startGoroutines(ctx, &wg, respC)
+
+	// Wait for spawned goroutines above to complete, then close respC.
+	go func() {
+		wg.Wait()
+		close(respC)
+	}()
+
+	// Wait for a successful response, or terminating error, from the spawned goroutines.
+	// The goroutine above will ensure the response channel is closed once all goroutines are done.
+	var errs []error
+	for resp := range respC {
+		switch err := resp.Err; {
+		case errors.Is(err, wancli.ErrUsingNonRegisteredDevice):
+			// Surface error immediately.
+			return nil, trace.Wrap(resp.Err)
+		case err != nil:
+			errs = append(errs, err)
+			// Continue to give the other authn goroutine a chance to succeed.
+			// If both have failed, this will exit the loop.
+			continue
+		}
+
+		// Return successful response.
+		return resp.Resp, nil
+	}
+
+	return nil, trace.Wrap(trace.NewAggregate(errs...), "failed to authenticate using available MFA devices")
 }
