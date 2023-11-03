@@ -11,33 +11,34 @@ upgrades or upgrade them manually using the method you used to install Teleport.
 ## Prerequisites
 
 - Familiarity with the [Upgrading Compatibility Overview](./overview.mdx) guide,
-  which describes the sequence in which to upgrade components of your cluster.
+  which describes the sequence in which to upgrade components in your cluster.
 
-- Teleport Enterprise Cloud or Teleport Team account. You can determine the
-  current version of these services by running the following command, where
-  `mytenant` is the name of your Teleport Team or Teleport Enterprise Cloud
-  account:
+- A Teleport Enterprise Cloud or Teleport Team account. You can determine the
+  current version of the Auth Service and Proxy Service by running the following
+  command, where `mytenant` is the name of your Teleport Team or Teleport
+  Enterprise Cloud account. This requires the [`jq` CLI
+  tool](https://jqlang.github.io/jq/):
 
   ```code
   $ curl -s https://mytenant.teleport.sh/webapi/ping | jq '.server_version'
   ```
 
 Teleport supports automatic agent updates for systemd-based Linux distributions
-using `apt`, `yum`, and `zypper` package managers. The [Automatic Update Architecture
-](../../architecture/agent-update-management.mdx) guide describes how agent
-updating works. Automatic agent upgrades require:
+using `apt`, `yum`, and `zypper` package managers. The [Automatic Update
+Architecture](../../architecture/agent-update-management.mdx) guide describes
+how agent updating works. Automatic agent upgrades require:
 
-- A Teleport Cloud account that supports automatic upgrades.
+- A Teleport Cloud account that supports automatic upgrades. To determine if
+  your account supports automatic upgrades, run the following command, replacing
+  `mytenant.teleport.sh` with the address of your Teleport Cloud account:
+
+  ```code
+  $ curl -s https://mytenant.teleport.sh/webapi/ping | jq '.automatic_upgrades'
+  true
+  ```
 
 - At least one Teleport Enterprise agent, started via systemd on a distribution
   using the `apt` or `yum` package managers.
-- A **version server** in your infrastructure that agents can query in order to
-  upgrade themselves. Read [Set up Automatic Upgrade
-  Infrastructure](./self-hosted-automatic-agent-updates.mdx).
-
-  If your environment does not support automatic upgrades, you can follow the
-  same instructions to upgrade agents that you used to upgrade the Auth Service
-  and Proxy Service.
 
 ## Step 1/2. Find agents to upgrade
 
