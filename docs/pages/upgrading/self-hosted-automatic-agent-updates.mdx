@@ -198,3 +198,9 @@ Service and enroll agents in automatic upgrades on your platform:
   Kubernetes](docs/pages/upgrading/self-hosted-kubernetes.mdx)
 - [Upgrade Self-Hosted Teleport Deployments on Linux
   Servers](docs/pages/upgrading/self-hosted-linux.mdx)
+
+While this guide showed you how to apply a `cluster_maintenance_config` resource
+using `tctl`, we recommend using infrastructure as code to maintain your
+Teleport resources. See the
+[`teleport_cluster_maintenance_config`](../reference/terraform-provider.mdx#teleport_cluster_maintenance_config)
+for how to declare a cluster maintenance configuration with Terraform.
