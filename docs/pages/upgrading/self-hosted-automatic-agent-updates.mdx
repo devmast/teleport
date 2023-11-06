@@ -8,14 +8,14 @@ using `apt`, `yum`, and `zypper` package managers, as well as Kubernetes
 clusters. 
 
 Teleport agents run an **updater** that queries a **version server** to
-determine whether they are out of date. The [Automatic Update Architecture
-](../../architecture/agent-update-management.mdx) guide describes how automatic
-agent upgrades work in more detail.
+determine whether they are out of date. This guide desribes how to set up your
+infrastructure to support automatic upgrades. If you are a Teleport Cloud user
+or run a version server already, return to the [Upgrading](../upgrading.mdx)
+menu for the appropriate next steps to upgrade Teleport.
 
-This guide desribes how to set up your infrastructure to support automatic
-upgrades. If you are a Teleport Cloud user or run a version server already,
-return to the [Upgrading](../upgrading.mdx) menu for the appropriate next steps
-to upgrade Teleport.
+The [Automatic Update
+Architecture](../../architecture/agent-update-management.mdx) guide explains how
+automatic agent upgrades work in more detail.
 
 <Admonition type="warning">
 Systemd agents enrolled into automatic upgrades can only install versions
@@ -34,28 +34,26 @@ Teleport v13.3.2 forward, including future major releases.
 
 - Self-hosted Teleport cluster v13.0 or higher.
 
-- The version server must be hosted on a webserver with trusted TLS certificates
-  and reachable by all agents. 
+The version server must be hosted on a webserver with trusted TLS certificates
+and reachable by all agents. You must have either:
+  - A public Amazon S3 or Google Cloud Storage bucket.
+  - A web server accessible from all agents with valid TLS certificates.
 
-  You must have either:
-    - A public Amazon S3 or Google Cloud Storage bucket.
-    - A web server accessible from all agents with valid TLS certificates.
+If you do not have an S3 or GCS bucket for your version server, this guide
+provides an example of how to create one using Terraform. You can [install
+Terraform](https://developer.hashicorp.com/terraform/downloads) to spin up a
+demo version server along with this guide so you can get started with automatic
+agent upgrades. Terraform is not required to set up a version server. 
 
-  In this guide, we will demonstrate how to create a version server using
-  Terraform with Google Cloud Storage and Amazon S3. Terraform is not required
-  to set up a version server, but you can [install
-  Terraform](https://developer.hashicorp.com/terraform/downloads) to spin up a
-  demo version server along with this guide so you can get started with
-  automatic agent upgrades.
 - (!docs/pages/includes/tctl.mdx!)
 
 ## Step 1/3. Create release channel files
 
-A release channel contains two pieces of information: the targeted version and
-if the upgrade is critical. Updaters subscribe to a release channel and will
-upgrade to the provided version during a maintenance window if possible. If the
-upgrade is critical, updaters will ignore the maintenance schedule and upgrade as
-soon as possible.
+A **release channel** contains two pieces of information: the targeted version
+and if the upgrade is critical. Updaters subscribe to a release channel and will
+upgrade to the provided version during a **maintenance window** (which we will
+configure later in this guide). If the upgrade is critical, updaters will ignore
+the maintenance schedule and upgrade as soon as possible.
 
 The version server is a static file server that responds to the following queries:
 
@@ -67,8 +65,7 @@ $ curl https://<hosting-domain-and-path>/current/critical
 no
 ```
 
-1. Create a project directory where you will place the static files to serve as
-   well as your Terraform configuration:
+1. Create a project directory for the files we create in this guide:
 
    ```code
    $ mkdir version-server
@@ -96,7 +93,7 @@ no
 ## Step 2/3. Create a Terraform configuration
 
 1. In the project directory you created in the previous section, create a file
-   called `main.tf` and populated it with the following content, depending on
+   called `main.tf` and populate it with the following content, depending on
    whether you will use Amazon S3 or Google Cloud Storage:
 
    <Tabs>
@@ -124,14 +121,14 @@ no
    }
    
    resource "aws_s3_object" "version" {
-     bucket = aws_s3_bucket.version_server.name
-     key = "version"
+     bucket = aws_s3_bucket.version_server.id
+     key = "current/version"
      source = "${path.root}/current/version"
    }
    
    resource "aws_s3_object" "critical" {
-     bucket = aws_s3_bucket.version_server.name
-     key = "version"
+     bucket = aws_s3_bucket.version_server.id
+     key = "current/critical"
      source = "${path.root}/current/critical"
    }
    ```
@@ -161,13 +158,13 @@ no
    }
    
    resource "google_storage_bucket_object" "version" {
-     name   = "version"
+     name   = "current/version"
      source = "${path.root}/current/version"
      bucket = google_storage_bucket.version_server.name
    }
    
    resource "google_storage_bucket_object" "critical" {
-     name   = "critical"
+     name   = "current/critical"
      source = "${path.root}/current/critical"
      bucket = google_storage_bucket.version_server.name
    }
