@@ -1,23 +1,26 @@
 ---
 title: Set up Automatic Upgrade Infrastructure
-description: Describes how to setup automatic agent updates for self-hosted Teleport deployments.
+description: Describes how to setup automatic agent upgrades for self-hosted Teleport deployments.
 ---
 
-Teleport supports automatic agent updates for systemd-based Linux distributions
+Teleport supports automatic agent upgrades for systemd-based Linux distributions
 using `apt`, `yum`, and `zypper` package managers, as well as Kubernetes
-clusters. The [Automatic Update Architecture
-](../../architecture/agent-update-management.mdx) guide describes how agent
-updating works.
+clusters. 
+
+Teleport agents run an **updater** that queries a **version server** to
+determine whether they are out of date. The [Automatic Update Architecture
+](../../architecture/agent-update-management.mdx) guide describes how automatic
+agent upgrades work in more detail.
 
 This guide desribes how to set up your infrastructure to support automatic
-updates. If this is already done, or you are a Teleport Cloud user, you can
-directly [enroll agents into automatic
-updates](./enroll-agent-into-automatic-updates.mdx).
+upgrades. If you are a Teleport Cloud user or run a version server already,
+return to the [Upgrading](../upgrading.mdx) menu for the appropriate next steps
+to upgrade Teleport.
 
 <Admonition type="warning">
-Systemd agents enrolled into automatic updates can only install versions
+Systemd agents enrolled into automatic upgrades can only install versions
 present in their package repositories. As Teleport 14 won't be published to
-`stable/v13`, those agents will require manual intervention to be updated to
+`stable/v13`, those agents will require manual intervention to be upgraded to
 the next major version (adding a new APT/YUM/zypper repo for `stable/v14`).
 Alternatively, you can use the `stable/rolling` channel, which contains
 Teleport v13.3.2 forward, including future major releases.
@@ -28,56 +31,38 @@ Teleport v13.3.2 forward, including future major releases.
 
 - Familiarity with the [Upgrading Compatibility Overview](./overview.mdx) guide,
   which describes the sequence in which to upgrade components of your cluster.
-- Self-hosted Teleport cluster v13.0 and higher.
+- Self-hosted Teleport cluster v13.0 or higher.
+{/*TODO: does the editor role allow operations on
+cluster_maintenance_configs?*/}
 - Permissions to modify cluster maintenance configurations, which requires
   either:
   - The ability to execute `tctl` commands on an Auth Service machine 
   - A Teleport that allows the  verbs `create`, `read`, `update`, `delete` on
     the resource `cluster_maintenance_config`.
-- Either:
-  - A public Amazon S3 or Google Cloud Storage bucket.
-  - A web server accessible from all agents with valid TLS certificates.
+- The version server must be hosted on a webserver with trusted TLS certificates
+  and reachable by all agents. 
 
-## Step 1/3. Create release channel files
+  You must have either:
+    - A public Amazon S3 or Google Cloud Storage bucket.
+    - A web server accessible from all agents with valid TLS certificates.
 
-A release channel contains two pieces of information: the targeted version
-and if the update is critical. Updaters subscribe to a release channel and will
-update to the provided version during a maintenance window if possible. If the
-update is critical, updaters will ignore the maintenance schedule and update as
+  In this guide, we will demonstrate how to create a version server using
+  Terraform with Google Cloud Storage and Amazon S3. Terraform is not required
+  to set up a version server, but you can [install
+  Terraform](https://developer.hashicorp.com/terraform/downloads) to spin up a
+  demo version server along with this guide so you can get started with
+  automatic agent upgrades.
+- (!docs/pages/includes/tctl.mdx!)
+
+## Step 1/ . Create release channel files
+
+A release channel contains two pieces of information: the targeted version and
+if the upgrade is critical. Updaters subscribe to a release channel and will
+upgrade to the provided version during a maintenance window if possible. If the
+upgrade is critical, updaters will ignore the maintenance schedule and upgrade as
 soon as possible.
 
-Create a directory for the new release channel `current`.
-
-```code
-$ mkdir current/
-```
-
-Make the `current` release channel target the version (=teleport.version=):
-
-```code
-$ echo -n "(=teleport.version=)" > current/version
-```
-
-And mark the update as not critical:
-
-```code
-$ echo -n "no" > current/critical
-```
-
-## Step 2/3. Host the release channel files on the version server
-
-The release channel must be hosted on a webserver with trusted TLS certificates
-and reachable by all agents.
-
-Public cloud buckets like Amazon S3 or Google Cloud Storage are good
-candidates as they provide reliable low-maintenance file hosting.
-
-You can also serve the files with a regular webserver like `nginx`.
-The release channel needs to be served over HTTPS.
-
-Choose a way to serve the release channel and setup the hosting.
-
-The webserver must answer the following queries:
+The version server is a static file server that responds to the following queries:
 
 ```code
 $ curl https://<hosting-domain-and-path>/current/version
@@ -87,23 +72,108 @@ $ curl https://<hosting-domain-and-path>/current/critical
 no
 ```
 
-The web server serving the release channel is called the version server.
-Save the version server domain and release channel name (here respectively
-`<hosting-domain-and-path>` and `current`) as they will be required
-later to configure the agent updaters.
+1. Create a project directory where you will place the static files to serve as
+   well as your Terraform configuration:
+
+   ```code
+   $ mkdir version-server
+   $ cd version-server
+   ```
+
+1. Create a directory for the new release channel `current`.
+
+   ```code
+   $ mkdir current/
+   ```
+
+1. Make the `current` release channel target the version (=teleport.version=):
+
+   ```code
+   $ echo -n "(=teleport.version=)" > current/version
+   ```
+
+1. And mark the upgrade as not critical:
+
+   ```code
+   $ echo -n "no" > current/critical
+   ```
+
+## Step 2/ . Create a Terraform configuration
+
+1. In the project directory you created in the previous section, create a file
+   called `main.tf` and populated it with the following content, depending on
+   whether you will use Amazon S3 or Google Cloud Storage:
+
+{/* TODO: Add provider blocks here?*/}
+{/* TODO: put these in "examples"?*/}
+   <Tabs>
+   <TabItem label="Amazon S3">
+   
+   ```hcl
+   resource "aws_s3_bucket" "version_server" {
+     bucket = "version-server"
+   }
+   
+   resource "aws_s3_object" "version" {
+     bucket = aws_s3_bucket.version_server.name
+     key = "version"
+     source = "${path.root}/current/version"
+   }
+   
+   resource "aws_s3_object" "critical" {
+     bucket = aws_s3_bucket.version_server.name
+     key = "version"
+     source = "${path.root}/current/critical"
+   }
+   ```
+   </TabItem>
+   <TabItem label="Google Cloud Storage">
+   
+   ```hcl
+   resource "google_cloud_storage_bucket" "version_server" {
+     name = "version-server"
+   }
+   
+   resource "google_storage_bucket_object" "version" {
+     name   = "version"
+     source = "${path.root}/current/version"
+     bucket = google_storage_bucket.version_server.name
+   }
+   
+   resource "google_storage_bucket_object" "critical" {
+     name   = "critical"
+     source = "${path.root}/current/critical"
+     bucket = google_storage_bucket.version_server.name
+   }
+   ```
+   </TabItem>
+   </Tabs>
+
+1. Make your cloud provider credentials available to Terraform. The method to
+   use depends on your organization, e.g., pasting environment variables into
+   your terminal.
+
+1. Apply the configuration:
+
+  ```code
+  $ terraform init
+  $ terraform apply
+  ```
+
+{/* TODO: integrate content below this point into the guide*/}
 
 ## Step 3/3. Configure the maintenance schedule
 
 At this point the updaters can be configured to pull the version from the
-release channel and update the agents. However, they still don't know when
-they should perform updates.
+release channel and upgrade the agents. However, they still don't know when
+they should perform upgrades.
 
-Agents can retrieve the maintenance schedule from the Teleport cluster and
-pass it to the updater. In this step you'll configure the maintenance
-schedule for the whole cluster.
+Agents can retrieve the maintenance schedule from the Teleport cluster and pass
+it to the updater. In this step you'll configure the maintenance schedule for
+the whole cluster.
 
-Create the following `cmc.yaml` manifest allowing maintenances on Monday, Wednesday
-and Friday between 02:00 and 03:00 UTC.
+Create the following `cmc.yaml` manifest allowing maintenances on Monday,
+Wednesday and Friday between 02:00 and 03:00 UTC.
 
 (!docs/pages/includes/cluster-maintenance-config-spec.mdx!)
 
@@ -116,9 +186,15 @@ maintenance window has been updated
 
 ## Next steps
 
-At this point, the cluster is ready for agent automatic updates.
-Agents configured to automatically update will fetch their version from the
-version server. By changing the target version served by the version server
-you can upgrade or downgrade the agents.
+At this point, the cluster is ready for agent automatic upgrades. Agents
+configured to automatically upgrade will fetch their version from the version
+server. By changing the target version served by the version server you can
+upgrade or downgrade the agents.
 
-You can now [enroll agents into automatic updates](./enroll-agent-into-automatic-updates.mdx).
+Read one of the following guides for how to upgrade the Auth Service and Proxy
+Service and enroll agents in automatic upgrades on your platform:
+
+- [Upgrade Self-Hosted Teleport Deployments on
+  Kubernetes](docs/pages/upgrading/self-hosted-kubernetes.mdx)
+- [Upgrade Self-Hosted Teleport Deployments on Linux
+  Servers](docs/pages/upgrading/self-hosted-linux.mdx)
