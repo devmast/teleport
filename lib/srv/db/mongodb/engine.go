@@ -19,6 +19,7 @@ package mongodb
 import (
 	"context"
 	"net"
+	"sync/atomic"
 
 	"github.com/gravitational/trace"
 	"github.com/prometheus/client_golang/prometheus"
@@ -53,6 +54,8 @@ type Engine struct {
 	clientConn net.Conn
 	// maxMessageSize is the max message size.
 	maxMessageSize uint32
+	// serverConnected specifies whether server connection has been created.
+	serverConnected atomic.Bool
 }
 
 // InitializeConnection initializes the client connection.
@@ -91,6 +94,7 @@ func (e *Engine) HandleConnection(ctx context.Context, sessionCtx *common.Sessio
 	e.Audit.OnSessionStart(e.Context, sessionCtx, nil)
 	defer e.Audit.OnSessionEnd(e.Context, sessionCtx)
 
+	e.serverConnected.Store(true)
 	observe()
 
 	msgFromClient := common.GetMessagesFromClientMetric(sessionCtx.Database)
@@ -269,7 +273,23 @@ func (e *Engine) checkClientMessage(sessionCtx *common.Session, message protocol
 			database)...)
 }
 
+func (e *Engine) waitForAnyClientMessage(clientConn net.Conn) protocol.Message {
+	clientMessage, err := protocol.ReadMessage(clientConn, e.maxMessageSize)
+	if err != nil {
+		e.Log.Warnf("Failed to read a message for reply: %v.", err)
+		return nil
+	}
+	return clientMessage
+}
+
 func (e *Engine) replyError(clientConn net.Conn, replyTo protocol.Message, err error) {
+	// If an error happens during server connection, wait for a client message
+	// before replying to ensure the client can interpret the reply.
+	// The first message is usually the isMaster hello message.
+	if replyTo == nil && !e.serverConnected.Load() {
+		replyTo = e.waitForAnyClientMessage(clientConn)
+	}
+
 	errSend := protocol.ReplyError(clientConn, replyTo, err)
 	if errSend != nil {
 		e.Log.WithError(errSend).Errorf("Failed to send error message to MongoDB client: %v.", err)
