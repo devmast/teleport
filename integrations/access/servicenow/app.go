@@ -138,6 +138,7 @@ func (a *App) run(ctx context.Context) error {
 func (a *App) init(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, initTimeout)
 	defer cancel()
+	log := logger.Get(ctx)
 
 	var err error
 	if a.teleport == nil {
@@ -236,7 +237,7 @@ func (a *App) onWatcherEvent(ctx context.Context, event types.Event) error {
 
 func (a *App) onPendingRequest(ctx context.Context, req types.AccessRequest) error {
 	reqID := req.GetName()
-	log := log.WithField("reqId", reqID)
+	log := logger.Get(ctx).WithField("reqId", reqID)
 
 	resourceNames, err := a.BaseApp.GetResourceNames(ctx, req)
 	if err != nil {
