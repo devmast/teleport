@@ -134,6 +134,7 @@ no
    }
 
    resource "aws_s3_bucket_policy" "version_server" {
+     depends_on = [aws_s3_bucket_public_access_block.version_server]
      bucket = aws_s3_bucket.version_server.id
      policy = jsonencode({
        Version = "2012-10-17"
@@ -149,6 +150,15 @@ no
          },
        ]
      })
+   }
+   
+   resource "aws_s3_bucket_public_access_block" "version_server" {
+     bucket = aws_s3_bucket.version_server.id
+   
+     block_public_acls       = false
+     block_public_policy     = false
+     ignore_public_acls      = false
+     restrict_public_buckets = false
    }
    ```
    </TabItem>
