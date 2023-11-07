@@ -82,7 +82,7 @@ be embraced. The message from above can be translated to carry a bit more contex
 message can be moved to the attributes.
 
 > ```go
-> slog.Info("Proxied connection to cluster established.", "cluster_name", clusterName, "remote_address", conn.RemoteAddr())
+> slog.InfoContext(ctx, "Proxied connection to cluster established.", "cluster_name", clusterName, "remote_address", conn.RemoteAddr())
 >```
 >```bash
 >2023-11-02T15:18:40-04:00 [PROXY]    INFO Proxied connection to cluster established. pid:14968.1 cluster_name:foo remote_address:192.168.1.243  regular/proxy.go:250
@@ -102,14 +102,14 @@ API, `With` takes a series of key value pairs instead of a struct like `logrus`.
 converted to the following with `log/slog`.
 
 ```go
-slog.With("user", user).Warn("Failed to emit account recovery code used failed event.")
+slog.With("user", user).WarnContext(ctx, "Failed to emit account recovery code used failed event.")
 ```
 
 However, instead of creating a clone of the logger with the `user` field added, the desired attributes should be
 passed directly to the `Warn` method instead.
 
 ```go
-slog.Warn("Failed to emit account recovery code used failed event.", "user", user)
+slog.WarnContext(ctx, "Failed to emit account recovery code used failed event.", "user", user)
 ```
 
 The main benefit to using `slog.With` is that any attributes provided to it are formatted once instead of each time a
@@ -132,9 +132,9 @@ log several messages, be that in a function or a logger that is a struct member.
 >```go
 >slogLogger := slog.With("device_id", ref.DeviceID, "os_type", ref.OSType, "asset_tag", assetTag)
 >...
->slogLogger.Debug("some message")
+>slogLogger.DebugContext(ctx, "some message")
 >...
->slogLogger.Warn("some other message")
+>slogLogger.WarnContext(ctx, "some other message")
 >```
 
 #### WithError
@@ -142,9 +142,7 @@ log several messages, be that in a function or a logger that is a struct member.
 Unlike `logrus`, `log/slog` does not provide any special APIs for dealing with errors. When converting to `log/slog` any
 usages of `WithError` should follow the same advice from the `WithField(s)` section. If the error is only included in a
 single log message, then it should be added as an attribute to the log function. If the error is included in multiple
-messages
-then a logger should be created via `With("error", err)`.
-
+messages then a logger should be created via `With("error", err)`.
 
 > `logrus`
 >```go
@@ -152,7 +150,7 @@ then a logger should be created via `With("error", err)`.
 >```
 >`log/slog`
 >```go
->slog.Error("Error parsing response.", "error", err)
+>slog.ErrorContext(ctx, "Error parsing response.", "error", err)
 >```
 
 ### Best Practices
@@ -170,10 +168,10 @@ the [`slog.LogValuer`](https://pkg.go.dev/log/slog@master#LogValuer) interface.
 
 For high volume log messages prefer to use `slog.Logger.LogAttrs`. While the API is more verbose, it avoids any
 allocations, making it the most efficient way to produce output. The example below illustrates how to convert a
-message using `Info` to `LogAttrs`.
+message using `InfoContext` to `LogAttrs`.
 
 ```go
-slog.Info("Speed threshold reached", "flux_capacitors_charged", true, "operator", "doc brown")
+slog.InfoContext(ctx, "Speed threshold reached", "flux_capacitors_charged", true, "operator", "doc brown")
 slog.LogAttrs(ctx, slog.LevelInfo, "Speed threshold reached", slog.Bool("flux_capacitors_charged", true), slog.String("operator", "doc brown"))
 ```
 
@@ -185,7 +183,10 @@ to `log/slog`, we should do our best to start following a few simple rules.
 
 1) Embrace structured logging. Prefer using static messages and attributes instead of relying on `fmt.Sprintf` style
    formatting.
-1) Use a consistent naming convention for keys. Don't mix snake, kebab, camel, etc. for key names.
+1) All keys must be snake case to ensure all output from Teleport is consistent.
+1) Use the Context variants of the `slog.Logger` API. Providing the `context.Context` to all log messages allows them
+   to be enriched with additional attributes. For example, this allows log messages to automatically have a request or
+   trace id added, which makes correlating messages that were emitted as a result of one particular action or event.
 
 To achieve these, we can add enable the [`sloglint`](https://github.com/go-simpler/sloglint) linter in our golangci-lint
 configuration.
@@ -199,6 +200,7 @@ linters-settings:
   sloglint:
     static-msg: true
     key-naming-case: snake
+    context-only: true
 ```
 
 ### Security
@@ -222,12 +224,12 @@ Provide the `log/slog` API with a wrapped type that used `logrus` under the hood
 
 ```go
 type slogrus struct {
-	wrapped logrus.FieldLogger
+wrapped logrus.FieldLogger
 }
 
 // InfoContext here matches slog's InfoContext signature
 func (s *slogrus) InfoContext(ctx context.Context, msg string, args ...any) {
-	s.wrapped.WithFields(convertToFields(args)).Info(msg)
+s.wrapped.WithFields(convertToFields(args)).Info(msg)
 }
 ```
 
@@ -254,16 +256,16 @@ Write a `slog.Handler` that uses a `logrus.Logger` to format and produce output.
 
 ```go
 type slogrus struct {
-	wrapped logrus.FieldLogger
+wrapped logrus.FieldLogger
 }
 
 func (s *slogrus) WithAttrs(attrs []Attr) Handler {
-	return s.wrapped.WithFields(convertToFields(args))
+return s.wrapped.WithFields(convertToFields(args))
 }
 
 func (s *slogrus) Handle(_ context.Context, r Record) error {
-	s.wrapped.WithFields(convertRecordToFields(r)).Log(convertLevel(r.Level), r.Message)
-	return nil
+s.wrapped.WithFields(convertRecordToFields(r)).Log(convertLevel(r.Level), r.Message)
+return nil
 }
 ```
 
