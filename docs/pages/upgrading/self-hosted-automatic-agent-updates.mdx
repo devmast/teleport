@@ -131,6 +131,24 @@ no
      key = "current/critical"
      source = "${path.root}/current/critical"
    }
+
+   resource "aws_s3_bucket_policy" "version_server" {
+     bucket = aws_s3_bucket.version_server.id
+     policy = jsonencode({
+       Version = "2012-10-17"
+       Statement = [
+         {
+           Sid       = "GrantAnonymousReadPermissions"
+           Principal = "*"
+           Action = [
+             "s3:GetObject",
+           ]
+           Effect   = "Allow"
+           Resource = ["${aws_s3_bucket.version_server.arn}/*"]
+         },
+       ]
+     })
+   }
    ```
    </TabItem>
    <TabItem label="Google Cloud Storage">
