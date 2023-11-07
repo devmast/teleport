@@ -159,7 +159,7 @@ no
    ```hcl
    terraform {
      required_providers {
-       goodle = {
+       google = {
          source  = "hashicorp/google"
          version = "~> 5.0"
        }
@@ -171,7 +171,10 @@ no
      region      = "REGION"
    }
 
-   resource "google_cloud_storage_bucket" "version_server" {
+   resource "google_storage_bucket" "version_server" {
+     // Change the location as needed. See:
+     // https://cloud.google.com/storage/docs/locations
+     location = "US-EAST1"
      name = "version-server"
    }
    
@@ -196,7 +199,7 @@ no
      }
    }
    
-   resource "google_storage_bucket_iam_policy" "editor" {
+   resource "google_storage_bucket_iam_policy" "version_server" {
      bucket = google_storage_bucket.version_server.name
      policy_data = data.google_iam_policy.viewer.policy_data
    }
