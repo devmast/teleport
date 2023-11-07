@@ -62,6 +62,25 @@ func (c *Conn) ReadByte() (byte, error) {
 	return c.reader.ReadByte()
 }
 
+func (c *Conn) PeekLine(maxLength int) ([]byte, error) {
+	var line []byte
+	for i := 0; i < maxLength; i++ {
+		var err error
+		line, err = c.reader.Peek(len(line) + 1)
+		if err != nil {
+			return nil, err
+		}
+		if line[len(line)-1] == '\n' {
+			return line, nil
+		}
+	}
+	return nil, io.ErrUnexpectedEOF
+}
+
+func (c *Conn) Discard(n int) (discarded int, err error) {
+	return c.reader.Discard(n)
+}
+
 // LocalAddr returns local address of the connection
 func (c *Conn) LocalAddr() net.Addr {
 	if c.proxyLine != nil {

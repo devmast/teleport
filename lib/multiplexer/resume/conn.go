@@ -35,15 +35,19 @@ const (
 	maxFrameSize = 128 * 1024
 )
 
-func NewConn(localAddr, remoteAddr net.Addr) *Conn {
+func NewConn(localAddr, remoteAddr net.Addr, earlyData []byte, skipWrite uint64) *Conn {
 	c := &Conn{
 		localAddr:  localAddr,
 		remoteAddr: remoteAddr,
 
 		receive: window{data: make([]byte, 4096)},
 		replay:  window{data: make([]byte, 4096)},
+
+		skipWrite: skipWrite,
 	}
 	c.cond.L = &c.mu
+	c.receive.Append(earlyData)
+	c.replay.Advance(skipWrite)
 	return c
 }
 
@@ -64,6 +68,8 @@ type Conn struct {
 
 	receive window
 	replay  window
+
+	skipWrite uint64
 }
 
 var _ net.Conn = (*Conn)(nil)
@@ -90,43 +96,35 @@ func sameTCPSourceAddress(addr1, addr2 net.Addr) bool {
 	return t1.IP.Equal(t2.IP)
 }
 
-func (c *Conn) Attach(nc net.Conn, new bool) (detached chan error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	detached = make(chan error, 1)
-
+func (c *Conn) Attach(nc net.Conn, firstRun bool) error {
 	localAddr := nc.LocalAddr()
 	remoteAddr := nc.RemoteAddr()
 
+	c.mu.Lock()
 	if !c.allowRoaming && !sameTCPSourceAddress(c.remoteAddr, remoteAddr) {
+		c.mu.Unlock()
 		nc.Close()
-		detached <- trace.AccessDenied("invalid TCP source address for resumable non-roaming connection")
-		return detached
+		return trace.AccessDenied("invalid TCP source address for resumable non-roaming connection")
 	}
 
-	c.detachLocked()
+	c.waitForDetachLocked()
 
 	if c.closed {
-		logrus.Error("actually closed")
+		c.mu.Unlock()
 		nc.Close()
-		detached <- trace.ConnectionProblem(net.ErrClosed, "attaching to a closed resumable connection: %v", net.ErrClosed.Error())
-		return detached
+		return trace.ConnectionProblem(net.ErrClosed, "attaching to a closed resumable connection: %v", net.ErrClosed.Error())
 	}
 
 	c.localAddr = localAddr
 	c.remoteAddr = remoteAddr
-
 	c.current = nc
 	c.cond.Broadcast()
-	go func() {
-		detached <- c.run(nc, new)
-	}()
+	c.mu.Unlock()
 
-	return detached
+	return c.run(nc, firstRun)
 }
 
-func (c *Conn) detachLocked() {
+func (c *Conn) waitForDetachLocked() {
 	for c.current != nil {
 		c.current.Close()
 		c.cond.Wait()
@@ -136,7 +134,7 @@ func (c *Conn) detachLocked() {
 func (c *Conn) Detach() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.detachLocked()
+	c.waitForDetachLocked()
 }
 
 func (c *Conn) Status() (closed, attached bool) {
@@ -146,10 +144,14 @@ func (c *Conn) Status() (closed, attached bool) {
 }
 
 func (c *Conn) run(nc net.Conn, firstRun bool) error {
+	var closeOnReturn bool
 	defer func() {
 		c.mu.Lock()
 		defer c.mu.Unlock()
 		c.current = nil
+		if closeOnReturn {
+			c.closed = true
+		}
 		c.cond.Broadcast()
 	}()
 	defer nc.Close()
@@ -165,19 +167,15 @@ func (c *Conn) run(nc net.Conn, firstRun bool) error {
 
 	c.mu.Lock()
 	sentReceivePosition := c.receive.End()
+	peerReceivePosition := c.replay.Start()
 	c.mu.Unlock()
 
-	var peerReceivePosition uint64
-
-	varintBuf := make([]byte, 0, 2*binary.MaxVarintLen64)
 	if !firstRun {
-		if _, err := nc.Write(binary.AppendUvarint(varintBuf, sentReceivePosition)); err != nil {
+		if err := binary.Write(nc, binary.BigEndian, sentReceivePosition); err != nil {
 			return trace.ConnectionProblem(err, "writing position during handshake: %v", err)
 		}
 
-		var err error
-		peerReceivePosition, err = binary.ReadUvarint(ncReader)
-		if err != nil {
+		if err := binary.Read(ncReader, binary.BigEndian, &peerReceivePosition); err != nil {
 			return trace.ConnectionProblem(err, "reading position during handshake: %v", err)
 		}
 
@@ -186,8 +184,11 @@ func (c *Conn) run(nc net.Conn, firstRun bool) error {
 			// we advanced our replay buffer past the read point of the peer, or the
 			// read point of the peer is in the future - can't continue, either way
 			c.mu.Unlock()
+			closeOnReturn = true
+			_, _ = nc.Write(binary.AppendUvarint(nil, 0xffff_ffff_ffff_ffff))
 			return trace.BadParameter("incompatible resume position")
 		}
+
 		if c.replay.Start() != peerReceivePosition {
 			c.replay.Advance(peerReceivePosition - c.replay.Start())
 			c.cond.Broadcast()
@@ -201,17 +202,18 @@ func (c *Conn) run(nc net.Conn, firstRun bool) error {
 
 	var eg errgroup.Group
 	var done bool
+	setDone := func() {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		if done {
+			return
+		}
+		done = true
+		c.cond.Broadcast()
+	}
 
 	eg.Go(func() error {
-		defer func() {
-			c.mu.Lock()
-			defer c.mu.Unlock()
-			if done {
-				return
-			}
-			done = true
-			c.cond.Broadcast()
-		}()
+		defer setDone()
 		defer nc.Close()
 
 		for {
@@ -221,9 +223,10 @@ func (c *Conn) run(nc net.Conn, firstRun bool) error {
 			}
 
 			if ack > 0 {
-				// if ack == 0xffff_ffff_ffff_ffff {
-				// 	// explicit close
-				// }
+				if ack == 0xffff_ffff_ffff_ffff {
+					closeOnReturn = true
+					return trace.BadParameter("closed by remote end")
+				}
 				c.mu.Lock()
 
 				if replayLen := c.replay.Len(); ack > replayLen {
@@ -280,16 +283,11 @@ func (c *Conn) run(nc net.Conn, firstRun bool) error {
 	})
 
 	eg.Go(func() error {
-		defer func() {
-			c.mu.Lock()
-			defer c.mu.Unlock()
-			if done {
-				return
-			}
-			done = true
-			c.cond.Broadcast()
-		}()
+		defer setDone()
 		defer nc.Close()
+
+		varintBuf := make([]byte, 0, 2*binary.MaxVarintLen64)
+
 		for {
 			var sendAck uint64
 			var sendBuf []byte
@@ -347,7 +345,7 @@ func (c *Conn) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	c.detachLocked()
+	c.waitForDetachLocked()
 
 	if c.closed {
 		return nil
@@ -457,12 +455,17 @@ func (c *Conn) Write(b []byte) (n int, err error) {
 		return 0, os.ErrDeadlineExceeded
 	}
 
-	if len(b) == 0 {
-		return 0, nil
+	if len64(b) <= c.skipWrite {
+		c.skipWrite -= len64(b)
+		return len(b), nil
 	}
 
 	for {
 		if c.replay.Len() < writeBufferSize {
+			b = b[c.skipWrite:]
+			n += int(c.skipWrite)
+			c.skipWrite = 0
+
 			s := min(writeBufferSize-c.replay.Len(), len64(b))
 			c.replay.Append(b[:s])
 			b = b[s:]
@@ -481,7 +484,7 @@ func (c *Conn) Write(b []byte) (n int, err error) {
 		}
 
 		if c.writeDeadline.TimeoutLocked() {
-			return 0, os.ErrDeadlineExceeded
+			return n, os.ErrDeadlineExceeded
 		}
 	}
 }

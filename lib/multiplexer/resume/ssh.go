@@ -15,11 +15,14 @@
 package resume
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
-	"encoding/binary"
+	"encoding/hex"
+	"fmt"
 	"io"
 	"net"
+	"regexp"
 	"sync"
 	"time"
 
@@ -37,34 +40,46 @@ const (
 	clientSuffix  = "\x00" + protocolString
 	clientPrelude = sshPrefix + clientSuffix
 
-	serverPrelude = protocolString + "\r\n"
+	maxU64Bytes = "\xff\xff\xff\xff\xff\xff\xff\xff"
+	maxU64      = 0xffff_ffff_ffff_ffff
 )
 
 type connectionHandler interface {
 	HandleConnection(net.Conn)
 }
 
-func NewResumableSSHServer(sshServer connectionHandler, hostID string) *ResumableSSHServer {
-	hostIDBuf := make([]byte, 0, 8+len(hostID))
-	hostIDBuf = binary.LittleEndian.AppendUint64(hostIDBuf, uint64(len(hostID)))
-	hostIDBuf = append(hostIDBuf, hostID...)
-
+func NewResumableSSHServer(sshServer connectionHandler, serverVersion, hostID string) *ResumableSSHServer {
 	return &ResumableSSHServer{
 		sshServer: sshServer,
-		hostIDBuf: hostIDBuf,
-		log:       logrus.WithField(trace.Component, "resume"),
 
-		conns: make(map[[16]byte]*Conn),
+		serverVersion: serverVersion,
+		hostID:        hostID,
+
+		log: logrus.WithField(trace.Component, "resume"),
+
+		conns: make(map[token]*Conn),
 	}
+}
+
+type token = [8]byte
+
+func newToken() token {
+	var t token
+	if _, err := rand.Read(t[:]); err != nil {
+		panic(err)
+	}
+	return t
 }
 
 type ResumableSSHServer struct {
 	sshServer connectionHandler
-	hostIDBuf []byte
 	log       logrus.FieldLogger
 
+	serverVersion string
+	hostID        string
+
 	mu    sync.Mutex
-	conns map[[16]byte]*Conn
+	conns map[token]*Conn
 }
 
 var _ connectionHandler = (*ResumableSSHServer)(nil)
@@ -77,8 +92,10 @@ func multiplexerConn(nc net.Conn) *multiplexer.Conn {
 }
 
 func (r *ResumableSSHServer) HandleConnection(nc net.Conn) {
+	thisToken := newToken()
+
 	conn := multiplexerConn(nc)
-	if _, err := conn.Write([]byte(serverPrelude)); err != nil {
+	if _, err := conn.Write([]byte(fmt.Sprintf("%v %x %v\r\n%v\r\n", protocolString, thisToken, r.hostID, r.serverVersion))); err != nil {
 		if !utils.IsOKNetworkError(err) {
 			r.log.WithError(err).Error("Error while writing resumption prelude.")
 		}
@@ -97,142 +114,154 @@ func (r *ResumableSSHServer) HandleConnection(nc net.Conn) {
 
 	if !isResume {
 		r.log.Info("Handling non-resumable connection.")
-		// the other party is not a resume-aware client, so we bail and give the
-		// connection to the underlying SSH server; we have written a
-		// CRLF-terminated line and read nothing from the connection, so it's
-		// legal for a SSH server to take over the connection from here
-		r.sshServer.HandleConnection(conn)
+		r.sshServer.HandleConnection(newWriteSkipConn(conn, uint32(len(r.serverVersion)+len("\r\n"))))
 		return
 	}
 
-	isNew, err := conn.ReadPrelude("\x00")
-	if err != nil {
+	var resumptionToken token
+	if _, err := io.ReadFull(conn, resumptionToken[:]); err != nil {
 		if !utils.IsOKNetworkError(err) {
-			r.log.WithError(err).Error("Error while handling connection.")
+			r.log.WithError(err).Error("Error while reading resumption handshake.")
 		}
 		conn.Close()
 		return
 	}
-	if isNew {
+
+	if resumptionToken == thisToken {
 		r.log.Info("Handling new resumable SSH connection.")
 
-		var resumptionToken [16]byte
-		if _, err := rand.Read(resumptionToken[:]); err != nil {
-			r.log.WithError(err).Error("Failed to generate resumption token.")
-			conn.Close()
-			return
-		}
-		resumptionToken[0] |= 0x80
-
-		if _, err := conn.Write(append(resumptionToken[:], r.hostIDBuf...)); err != nil {
-			if !utils.IsOKNetworkError(err) {
-				r.log.WithError(err).Error("Error during resumption handshake.")
-			}
-			conn.Close()
-			return
-		}
-
-		resumableConn := NewConn(conn.LocalAddr(), conn.RemoteAddr())
+		resumableConn := NewConn(conn.LocalAddr(), conn.RemoteAddr(), nil, uint64(len(r.serverVersion)+len("\r\n")))
 		r.mu.Lock()
-		r.conns[resumptionToken] = resumableConn
+		r.conns[thisToken] = resumableConn
 		r.mu.Unlock()
 
 		go r.sshServer.HandleConnection(resumableConn)
-		<-resumableConn.Attach(conn, true)
+		r.log.Debugf("Handling new resumable connection: %v", resumableConn.Attach(conn, true))
 		return
 	}
 
 	r.log.Info("===== REATTACHING CONNECTION ======")
-	var resumptionToken [16]byte
-	if _, err := io.ReadFull(conn, resumptionToken[:]); err != nil {
-		r.log.WithError(err).Error("===== FAILED TO READ RESUMPTION TOKEN ======")
-		conn.Close()
-		return
-	}
 
 	r.mu.Lock()
 	resumableConn := r.conns[resumptionToken]
 	r.mu.Unlock()
 	if resumableConn == nil {
-		r.log.Error("====== CONNECTION NOT FOUND ======")
+		// sentinel value for the handshake to signify "unknown resumption token
+		// or invalid resumption point"
+		_, _ = conn.Write([]byte(maxU64Bytes))
 		conn.Close()
+		r.log.Info("===== UNKNOWN RESUMPTION TOKEN =====")
 		return
 	}
 
-	conn.Write([]byte("\x01"))
-	r.log.Info("ATTACHING CONNECTION")
-	<-resumableConn.Attach(conn, false)
+	r.log.Debugf("Handling existing resumable connection: %v", resumableConn.Attach(conn, false))
 }
 
-func NewResumableSSHClientConn(nc net.Conn, connCtx context.Context, dial func(connCtx context.Context, addrPort string) (net.Conn, error)) (net.Conn, error) {
+var resumablePreludeLine = regexp.MustCompile(`^` + regexp.QuoteMeta(protocolString) + ` ([0-9a-f]{16}) ([0-9a-z\-]+)\r\n$`)
+
+// readVersionExchange will read LF-terminated lines from the conn until it
+// either finds a SSH- one, which indicates the end of the SSH version exchange,
+// or it finds a match for a resumption protocol version line, from which it'll
+// extract the included values, and it will then peek the next line as the early
+// data for the resumable connection. Since the LF-delimited early data is a
+// requirement of the protocol, the version exchange indicates a success with a
+// non-empty earlyData return value.
+func readVersionExchange(conn *multiplexer.Conn) (resumptionToken token, hostID string, earlyData []byte, err error) {
+	// as per RFC 4253 section 4.2, the maximum amount of data in the version
+	// exchange is 255 bytes
+	maxLength := 255
+
+	for {
+		var line []byte
+		line, err = conn.PeekLine(maxLength)
+		if err != nil {
+			return
+		}
+		maxLength -= len(line)
+
+		if bytes.HasPrefix(line, []byte("SSH-")) {
+			// we got to the (final) SSH line without encountering the
+			// resumption line, we return with an empty earlyData to signify
+			// that the connection is normal
+			return
+		}
+
+		match := resumablePreludeLine.FindSubmatch(line)
+		if match == nil {
+			// discard is guaranteed to work for the line we just peeked
+			_, _ = conn.Discard(len(line))
+			continue
+		}
+
+		// the regexp guarantees that we have an even number of hex characters
+		_, _ = hex.Decode(resumptionToken[:], match[1])
+		hostID = string(match[2])
+
+		// discard is guaranteed to work for the line we just peeked
+		_, _ = conn.Discard(len(line))
+		break
+	}
+
+	earlyData, err = conn.PeekLine(maxLength)
+	return
+}
+
+func MaybeResumableSSHClientConn(nc net.Conn, connCtx context.Context, dial func(connCtx context.Context, hostID string) (net.Conn, error)) (net.Conn, error) {
+	conn := multiplexerConn(nc)
+
 	// we must send the first 8 bytes of the version string; thankfully, no
 	// matter which SSH client we'll end up using, it must send `SSH-2.0-` as
 	// its first 8 bytes, as per RFC 4253 ("The Secure Shell (SSH) Transport
 	// Layer Protocol") section 4.2.
-	if _, err := nc.Write([]byte(sshPrefix)); err != nil {
-		nc.Close()
+	if _, err := conn.Write([]byte(sshPrefix)); err != nil {
+		conn.Close()
 		return nil, trace.Wrap(err)
 	}
-	conn := multiplexer.NewConn(nc)
 
-	isResume, err := conn.ReadPrelude(serverPrelude)
+	resumptionToken, hostID, earlyData, err := readVersionExchange(conn)
 	if err != nil {
 		conn.Close()
 		return nil, trace.Wrap(err)
 	}
-	if !isResume {
-		// the server side doesn't support resumption, so we just return the
-		// conn after having written sshPrefix to it already - we are going to
-		// assume that the application side will write the sshPrefix to it
-		// again, so we skip it
+	if len(earlyData) == 0 {
+		// regular SSH connection, conn is about to read the SSH- line from the
+		// server but we've sent sshPrefix already, so we have to skip it from
+		// the application side writes
 		return newWriteSkipConn(conn, uint32(len(sshPrefix))), nil
 	}
 
-	if _, err := conn.Write([]byte(clientSuffix + "\x00")); err != nil {
+	if _, err := conn.Write([]byte(clientSuffix)); err != nil {
 		conn.Close()
 		return nil, trace.Wrap(err)
 	}
 
-	var resumptionToken [16]byte
-	if _, err := io.ReadFull(conn, resumptionToken[:]); err != nil {
+	if _, err := conn.Write(resumptionToken[:]); err != nil {
 		conn.Close()
 		return nil, trace.Wrap(err)
 	}
 
-	var hostIDPort string
-	{
-		var hostIDLenBuf [8]byte
-		if _, err := io.ReadFull(conn, hostIDLenBuf[:]); err != nil {
-			conn.Close()
-			return nil, trace.Wrap(err)
-		}
-		hostIDLen := binary.LittleEndian.Uint64(hostIDLenBuf[:])
-		if hostIDLen > 256 {
-			conn.Close()
-			return nil, trace.BadParameter("overlong hostID %v", hostIDLen)
-		}
-		hostIDBuf := make([]byte, hostIDLen)
-		if _, err := io.ReadFull(conn, hostIDBuf); err != nil {
-			conn.Close()
-			return nil, trace.Wrap(err)
-		}
-		hostIDPort = string(hostIDBuf) + ":0"
-	}
-
-	resumableConn := NewConn(conn.LocalAddr(), conn.RemoteAddr())
+	resumableConn := NewConn(conn.LocalAddr(), conn.RemoteAddr(), earlyData, 0)
+	_, _ = conn.Discard(len(earlyData))
 	resumableConn.AllowRoaming()
-	detached := resumableConn.Attach(conn, true)
+
+	detached := make(chan struct{})
+	go func() {
+		defer close(detached)
+		resumableConn.Attach(conn, true)
+	}()
 
 	go func() {
-		reconnectTicker := time.NewTicker(30 * time.Second)
+		const replacementInterval = 30 * time.Second
+		reconnectTicker := time.NewTicker(replacementInterval)
 		defer reconnectTicker.Stop()
 
 		var backoff time.Duration
 		for {
 			select {
-			case <-detached:
 			case <-connCtx.Done():
 				resumableConn.Close()
+				return
+			case <-detached:
 			case <-reconnectTicker.C:
 			}
 
@@ -253,25 +282,15 @@ func NewResumableSSHClientConn(nc net.Conn, connCtx context.Context, dial func(c
 				return
 			}
 			logrus.Debug("Dialing.")
-			nc, err := dial(connCtx, hostIDPort)
+			nc, err := dial(connCtx, hostID)
 			if err != nil {
 				logrus.Errorf("Failed to dial: %v.", err.Error())
 				continue
 			}
 
-			c := multiplexer.NewConn(nc)
+			c := multiplexerConn(nc)
 			if _, err := c.Write([]byte(clientPrelude)); err != nil {
 				logrus.Errorf("Error writing resumption prelude: %v.", err.Error())
-				c.Close()
-				continue
-			}
-			isResume, err := c.ReadPrelude(serverPrelude)
-			if err != nil || !isResume {
-				if err != nil {
-					logrus.Errorf("Error reading resumption prelude: %v.", err.Error())
-				} else {
-					logrus.Errorf("Error reading resumption prelude: server is somehow not resumable.")
-				}
 				c.Close()
 				continue
 			}
@@ -281,21 +300,49 @@ func NewResumableSSHClientConn(nc net.Conn, connCtx context.Context, dial func(c
 				continue
 			}
 
-			success, err := c.ReadPrelude("\x01")
-			if err != nil || !success {
-				if err != nil {
-					logrus.Errorf("Error reading confirmation: %v.", err)
-				} else {
-					logrus.Errorf("Error reading confirmation: connection not found.")
-				}
+			_, _, earlyData, err := readVersionExchange(c)
+			if err != nil {
+				logrus.Errorf("Error reading resumption version exchange: %v.", err)
 				c.Close()
 				continue
 			}
+			if len(earlyData) == 0 {
+				logrus.Errorf("Somehow not a resumable connection on resumption.")
+				c.Close()
+				continue
+			}
+			_, _ = c.Discard(len(earlyData))
+
+			if fail, err := c.ReadPrelude(maxU64Bytes); err != nil {
+				logrus.Errorf("Error receiving resumption handshake: %v.", err)
+				c.Close()
+				continue
+			} else if fail {
+				if !attached {
+					logrus.Errorf("Failure to resume connection.")
+					c.Close()
+					resumableConn.Close()
+					return
+				} else {
+					logrus.Errorf("Failure to replace connection.")
+					c.Close()
+					continue
+				}
+			}
 
 			logrus.Info("Attaching connection.")
-			detached = resumableConn.Attach(c, false)
-			logrus.Info("Connection attached.")
+			detached = make(chan struct{})
+			go func() {
+				defer close(detached)
+				resumableConn.Attach(c, false)
+			}()
+
 			backoff = 0
+			reconnectTicker.Reset(replacementInterval)
+			select {
+			case <-reconnectTicker.C:
+			default:
+			}
 		}
 	}()
 

@@ -1632,7 +1632,6 @@ func (tc *TeleportClient) ConnectToNode(ctx context.Context, clt *ClusterClient,
 		defer span.End()
 
 		// try connecting to the node with the certs we already have
-		log.Infof("ConnectToNode DialHost(ctx, %q, %q, ...)", nodeDetails.Addr, nodeDetails.Cluster)
 		conn, details, err := clt.ProxyClient.DialHost(ctx, nodeDetails.Addr, nodeDetails.Cluster, tc.localAgent.ExtendedAgent)
 		if err != nil {
 			directResultC <- clientRes{err: err}
@@ -1640,9 +1639,8 @@ func (tc *TeleportClient) ConnectToNode(ctx context.Context, clt *ClusterClient,
 		}
 
 		nodeCluster := nodeDetails.Cluster
-		conn, err = resume.NewResumableSSHClientConn(conn, ctx, func(connCtx context.Context, addrPort string) (net.Conn, error) {
-			log.Infof("resumable DialHost(ctx, %q, %q, nil)", addrPort, nodeCluster)
-			c, _, err := clt.ProxyClient.DialHost(connCtx, addrPort, nodeCluster, nil)
+		conn, err = resume.MaybeResumableSSHClientConn(conn, ctx, func(connCtx context.Context, hostID string) (net.Conn, error) {
+			c, _, err := clt.ProxyClient.DialHost(connCtx, hostID+":0", nodeCluster, nil)
 			return c, err
 		})
 		if err != nil {
@@ -1782,16 +1780,14 @@ func (tc *TeleportClient) connectToNodeWithMFA(ctx context.Context, clt *Cluster
 		return nil, trace.Wrap(err)
 	}
 
-	log.Infof("connectToNodeWithMFA DialHost(ctx, %q, %q, ...)", nodeDetails.Addr, nodeDetails.Cluster)
 	conn, details, err := clt.ProxyClient.DialHost(ctx, nodeDetails.Addr, nodeDetails.Cluster, tc.localAgent.ExtendedAgent)
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
 
 	nodeCluster := nodeDetails.Cluster
-	conn, err = resume.NewResumableSSHClientConn(conn, ctx, func(connCtx context.Context, addrPort string) (net.Conn, error) {
-		log.Infof("resumable DialHost(ctx, %q, %q, nil)", addrPort, nodeCluster)
-		c, _, err := clt.ProxyClient.DialHost(connCtx, addrPort, nodeCluster, nil)
+	conn, err = resume.MaybeResumableSSHClientConn(conn, ctx, func(connCtx context.Context, hostID string) (net.Conn, error) {
+		c, _, err := clt.ProxyClient.DialHost(connCtx, hostID+":0", nodeCluster, nil)
 		return c, err
 	})
 	if err != nil {

@@ -87,9 +87,8 @@ func onProxyCommandSSH(cf *CLIConf) error {
 			return trace.Wrap(err)
 		}
 
-		conn, err = resume.NewResumableSSHClientConn(conn, cf.Context, func(connCtx context.Context, addrPort string) (net.Conn, error) {
-			log.Infof("proxy DialHost(ctx, %q, %q, nil)", addrPort, tc.SiteName)
-			c, _, err := clt.ProxyClient.DialHost(cf.Context, addrPort, tc.SiteName, nil)
+		conn, err = resume.MaybeResumableSSHClientConn(conn, cf.Context, func(connCtx context.Context, hostID string) (net.Conn, error) {
+			c, _, err := clt.ProxyClient.DialHost(connCtx, hostID+":0", tc.SiteName, nil)
 			return c, trace.Wrap(err)
 		})
 		if err != nil {
@@ -467,7 +466,7 @@ func onProxyCommandDB(cf *CLIConf) error {
 		if err != nil {
 			return trace.Wrap(err)
 		}
-		var opts = []dbcmd.ConnectCommandFunc{
+		opts := []dbcmd.ConnectCommandFunc{
 			dbcmd.WithLocalProxy("localhost", addr.Port(0), ""),
 			dbcmd.WithNoTLS(),
 			dbcmd.WithLogger(log),
@@ -892,7 +891,6 @@ func generateDBLocalProxyCert(key *libclient.Key, profile *libclient.ProfileStat
 	path := profile.DatabaseLocalCAPath()
 	if utils.FileExists(path) {
 		return nil
-
 	}
 	certPem, err := tlsca.GenerateSelfSignedCAWithConfig(tlsca.GenerateCAConfig{
 		Entity: pkix.Name{
@@ -968,7 +966,7 @@ var dbProxyAuthMultiTpl = template.Must(template.New("").Parse(
 ` + dbProxyConnectAd + `
 Use one of the following commands to connect to the database or to the address above using other database GUI/CLI clients:
 {{range $item := .commands}}
-  * {{$item.Description}}: 
+  * {{$item.Description}}:
 
   $ {{$item.Command}}
 {{end}}
