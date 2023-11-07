@@ -128,28 +128,26 @@ func (c *UnifiedResourceCache) put(ctx context.Context, resource resource) error
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	key := resourceKey(resource)
+	sortKey := makeResourceSortKey(resource)
 	oldResource, exists := c.resources[key]
-	if exists && resource.GetKind() == types.KindNode {
-		oldHostname := oldResource.(types.Server).GetHostname()
-		newHostname := resource.(types.Server).GetHostname()
-		if oldHostname != newHostname {
-			// When a node's hostname changes, it can result in "duplicate" resources in the sort trees,
-			// where they share the same name but have different hostnames, still referencing the same node.
-			// The "old" node remains in the cache as it's technically still active and has not received an OpDelete.
-			// To handle this, we first verify the node's existence in our resources map using its always-unique key, resourceKey.
-			// If it exists, we proceed to remove it from the relevant sort tree entries.
-			// Afterward, we can add them again with the new hostname
-			sortKey := makeResourceSortKey(oldResource)
-			if _, ok := c.nameTree.Delete(&item{Key: sortKey.byName}); !ok {
+	if exists {
+		// If the resource has changed in such a way that the sort keys
+		// for the nameTree or typeTree change, remove the old entries
+		// from those trees before adding a new one. This can happen
+		// when a node's hostname changes
+		oldSortKey := makeResourceSortKey(oldResource)
+		if string(oldSortKey.byName) != string(sortKey.byName) {
+			if _, ok := c.nameTree.Delete(&item{Key: oldSortKey.byName}); !ok {
 				return trace.NotFound("key %q is not found in unified cache name sort tree", string(sortKey.byName))
 			}
-			if _, ok := c.typeTree.Delete(&item{Key: sortKey.byType}); !ok {
+		}
+		if string(oldSortKey.byType) != string(sortKey.byType) {
+			if _, ok := c.typeTree.Delete(&item{Key: oldSortKey.byType}); !ok {
 				return trace.NotFound("key %q is not found in unified cache type sort tree", string(sortKey.byType))
 			}
 		}
 	}
 	c.resources[key] = resource
-	sortKey := makeResourceSortKey(resource)
 	c.nameTree.ReplaceOrInsert(&item{Key: sortKey.byName, Value: key})
 	c.typeTree.ReplaceOrInsert(&item{Key: sortKey.byType, Value: key})
 	return nil
