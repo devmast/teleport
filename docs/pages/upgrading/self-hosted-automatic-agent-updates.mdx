@@ -117,6 +117,7 @@ no
    }
 
    resource "aws_s3_bucket" "version_server" {
+     // Replace the bucket name to ensure it is unique
      bucket = "version-server"
    }
    
@@ -175,6 +176,7 @@ no
      // Change the location as needed. See:
      // https://cloud.google.com/storage/docs/locations
      location = "US-EAST1"
+     // Replace this to ensure it is unique
      name = "version-server"
    }
    
