@@ -2749,7 +2749,7 @@ func (tc *TeleportClient) runCommandOnNodes(ctx context.Context, clt *ClusterCli
 	}
 
 	if tc.SSHLogDir != "" {
-		if err := os.MkdirAll(tc.SSHLogDir, 0o700); err != nil {
+		if err := os.MkdirAll(tc.SSHLogDir, 0700); err != nil {
 			return trace.ConvertSystemError(err)
 		}
 	}

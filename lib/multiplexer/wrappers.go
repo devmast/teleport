@@ -64,7 +64,10 @@ func (c *Conn) ReadByte() (byte, error) {
 
 func (c *Conn) PeekLine(maxLength int) ([]byte, error) {
 	var line []byte
-	for i := 0; i < maxLength; i++ {
+	for {
+		if len(line) >= maxLength {
+			return nil, io.ErrUnexpectedEOF
+		}
 		var err error
 		line, err = c.reader.Peek(len(line) + 1)
 		if err != nil {
@@ -74,7 +77,6 @@ func (c *Conn) PeekLine(maxLength int) ([]byte, error) {
 			return line, nil
 		}
 	}
-	return nil, io.ErrUnexpectedEOF
 }
 
 func (c *Conn) Discard(n int) (discarded int, err error) {

@@ -466,7 +466,7 @@ func onProxyCommandDB(cf *CLIConf) error {
 		if err != nil {
 			return trace.Wrap(err)
 		}
-		opts := []dbcmd.ConnectCommandFunc{
+		var opts = []dbcmd.ConnectCommandFunc{
 			dbcmd.WithLocalProxy("localhost", addr.Port(0), ""),
 			dbcmd.WithNoTLS(),
 			dbcmd.WithLogger(log),
@@ -891,6 +891,7 @@ func generateDBLocalProxyCert(key *libclient.Key, profile *libclient.ProfileStat
 	path := profile.DatabaseLocalCAPath()
 	if utils.FileExists(path) {
 		return nil
+
 	}
 	certPem, err := tlsca.GenerateSelfSignedCAWithConfig(tlsca.GenerateCAConfig{
 		Entity: pkix.Name{
@@ -966,7 +967,7 @@ var dbProxyAuthMultiTpl = template.Must(template.New("").Parse(
 ` + dbProxyConnectAd + `
 Use one of the following commands to connect to the database or to the address above using other database GUI/CLI clients:
 {{range $item := .commands}}
-  * {{$item.Description}}:
+  * {{$item.Description}}: 
 
   $ {{$item.Command}}
 {{end}}
