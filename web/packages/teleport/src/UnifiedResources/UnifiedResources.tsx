@@ -19,6 +19,7 @@ import React, { useCallback, useState } from 'react';
 import { Flex } from 'design';
 
 import {
+  FilterKind,
   UnifiedResources as SharedUnifiedResources,
   UnifiedResourcesPinning,
   useUnifiedResourcesFetch,
@@ -46,27 +47,6 @@ import { FeatureFlags } from 'teleport/types';
 import { ResourceActionButton } from './ResourceActionButton';
 import SearchPanel from './SearchPanel';
 
-const getAvailableKinds = (flags: FeatureFlags) => {
-  const kinds = [];
-  if (flags.nodes) {
-    kinds.push('node');
-  }
-  if (flags.databases) {
-    kinds.push('db');
-  }
-  if (flags.desktops) {
-    kinds.push('windows_desktop');
-  }
-  if (flags.kubernetes) {
-    kinds.push('kube_cluster');
-  }
-  if (flags.applications) {
-    kinds.push('app');
-  }
-
-  return kinds;
-};
-
 export function UnifiedResources() {
   const { clusterId, isLeafCluster } = useStickyClusterId();
   const enabled = localStorage.areUnifiedResourcesEnabled();
@@ -84,6 +64,31 @@ export function UnifiedResources() {
   );
 }
 
+const getAvailableKindsWithAccess = (flags: FeatureFlags): FilterKind[] => {
+  return [
+    {
+      kind: 'node',
+      disabled: !flags.nodes,
+    },
+    {
+      kind: 'app',
+      disabled: !flags.applications,
+    },
+    {
+      kind: 'db',
+      disabled: !flags.databases,
+    },
+    {
+      kind: 'kube_cluster',
+      disabled: !flags.kubernetes,
+    },
+    {
+      kind: 'windows_desktop',
+      disabled: !flags.desktops,
+    },
+  ];
+};
+
 function ClusterResources({
   clusterId,
   isLeafCluster,
@@ -93,7 +98,6 @@ function ClusterResources({
 }) {
   const teleCtx = useTeleport();
   const flags = teleCtx.getFeatureFlags();
-  const availableKinds = getAvailableKinds(flags);
 
   const pinningNotSupported = localStorage.arePinnedResourcesDisabled();
   const {
@@ -203,7 +207,7 @@ function ClusterResources({
         updateUnifiedResourcesPreferences={preferences => {
           updatePreferences({ unifiedResourcePreferences: preferences });
         }}
-        availableKinds={availableKinds}
+        availableKinds={getAvailableKindsWithAccess(flags)}
         pinning={pinning}
         onLabelClick={onLabelClick}
         NoResources={

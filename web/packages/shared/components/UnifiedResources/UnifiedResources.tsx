@@ -126,6 +126,11 @@ type BulkAction = {
   ) => void;
 };
 
+export type FilterKind = {
+  kind: SharedUnifiedResource['resource']['kind'];
+  disabled: boolean;
+};
+
 interface UnifiedResourcesProps {
   params: UnifiedResourcesQueryParams;
   resourcesFetchAttempt: Attempt;
@@ -143,7 +148,7 @@ interface UnifiedResourcesProps {
    * can be passed here.
    */
   pinning: UnifiedResourcesPinning;
-  availableKinds: SharedUnifiedResource['resource']['kind'][];
+  availableKinds: FilterKind[];
   setParams(params: UnifiedResourcesQueryParams): void;
   onLabelClick(label: ResourceLabel): void;
   /** A list of actions that can be performed on the selected items. */
