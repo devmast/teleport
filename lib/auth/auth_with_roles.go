@@ -1540,6 +1540,31 @@ func (a *ServerWithRoles) GetNode(ctx context.Context, namespace, name string) (
 	return node, nil
 }
 
+func (a *ServerWithRoles) checkUnifiedAccess(resource types.ResourceWithLabels, checker resourceAccessChecker, actionVerbs []string, filter services.MatchResourceFilter) (bool, error) {
+	switch r := resource.(type) {
+	case types.SAMLIdPServiceProvider:
+		// TODO (avatus) we should add types.SAMLIdPServiceProvider to `resourceChecker.CanAccess`
+		if err := a.action(apidefaults.Namespace, r.GetKind(), actionVerbs...); err != nil {
+			return false, trace.Wrap(err)
+		}
+	default:
+		if err := a.action(apidefaults.Namespace, r.GetKind(), actionVerbs...); err != nil {
+			return false, trace.Wrap(err)
+		}
+		err := checker.CanAccess(r)
+		if err != nil {
+			// skip access denied error. It is expected that resources won't be available
+			// to some users and we want to keep iterating until we've reached the request limit
+			// of resources they have access to
+			if trace.IsAccessDenied(err) {
+				return false, nil
+			}
+			return false, trace.Wrap(err)
+		}
+	}
+	return services.MatchResourceByFilters(resource, filter, nil)
+}
+
 // ListUnifiedResources returns a paginated list of unified resources filtered by user access.
 func (a *ServerWithRoles) ListUnifiedResources(ctx context.Context, req *proto.ListUnifiedResourcesRequest) (*proto.ListUnifiedResourcesResponse, error) {
 	// Fetch full list of resources in the backend.
@@ -1577,7 +1602,9 @@ func (a *ServerWithRoles) ListUnifiedResources(ctx context.Context, req *proto.L
 		}()
 	}
 
-	resourceChecker, err := a.newResourceAccessChecker(types.KindUnifiedResource)
+	actionVerbs := []string{types.VerbList, types.VerbRead}
+
+	checker, err := a.newResourceAccessChecker(types.KindUnifiedResource)
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
@@ -1590,24 +1617,7 @@ func (a *ServerWithRoles) ListUnifiedResources(ctx context.Context, req *proto.L
 			return &proto.ListUnifiedResourcesResponse{}, nil
 		}
 		unifiedResources, err = a.authServer.UnifiedResourceCache.GetUnifiedResourcesByIDs(ctx, prefs.ClusterPreferences.PinnedResources.GetResourceIds(), func(resource types.ResourceWithLabels) (bool, error) {
-			var err error
-			switch r := resource.(type) {
-			// TODO (avatus) we should add this type into the `resourceChecker.CanAccess` method
-			case types.SAMLIdPServiceProvider:
-				err = a.action(apidefaults.Namespace, types.KindSAMLIdPServiceProvider, types.VerbList)
-			default:
-				err = resourceChecker.CanAccess(r)
-			}
-			if err != nil {
-				// skip access denied error. It is expected that resources won't be available
-				// to some users and we want to keep iterating until we've reached the request limit
-				// of resources they have access to
-				if trace.IsAccessDenied(err) {
-					return false, nil
-				}
-				return false, trace.Wrap(err)
-			}
-			return services.MatchResourceByFilters(resource, filter, nil)
+			return a.checkUnifiedAccess(resource, checker, actionVerbs, filter)
 		})
 		if err != nil {
 			return nil, trace.Wrap(err)
@@ -1621,25 +1631,7 @@ func (a *ServerWithRoles) ListUnifiedResources(ctx context.Context, req *proto.L
 		}
 	} else {
 		unifiedResources, nextKey, err = a.authServer.UnifiedResourceCache.IterateUnifiedResources(ctx, func(resource types.ResourceWithLabels) (bool, error) {
-			var err error
-			switch r := resource.(type) {
-			case types.SAMLIdPServiceProvider:
-				err = a.action(apidefaults.Namespace, types.KindSAMLIdPServiceProvider, types.VerbList)
-			default:
-				err = resourceChecker.CanAccess(r)
-			}
-
-			if err != nil {
-				// skip access denied error. It is expected that resources won't be available
-				// to some users and we want to keep iterating until we've reached the request limit
-				// of resources they have access to
-				if trace.IsAccessDenied(err) {
-					return false, nil
-				}
-				return false, trace.Wrap(err)
-			}
-			match, err := services.MatchResourceByFilters(resource, filter, nil)
-			return match, trace.Wrap(err)
+			return a.checkUnifiedAccess(resource, checker, actionVerbs, filter)
 		}, req)
 		if err != nil {
 			return nil, trace.Wrap(err)

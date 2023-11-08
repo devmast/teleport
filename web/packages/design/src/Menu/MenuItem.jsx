@@ -62,11 +62,6 @@ const MenuItem = styled.div`
       ? props.theme.colors.text.disabled
       : props.theme.colors.text.main};
 
-  &:hover,
-  &:focus {
-    // text-decoration: none;
-  }
-
   ${fromTheme}
 `;
 
