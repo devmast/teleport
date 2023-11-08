@@ -19,17 +19,18 @@ package resources
 import (
 	"context"
 
+	"github.com/gravitational/teleport/integrations/operator/embeddedtbot/syncclient"
+
 	"github.com/gravitational/trace"
 	kclient "sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/gravitational/teleport/api/types"
 	resourcesv2 "github.com/gravitational/teleport/integrations/operator/apis/resources/v2"
-	"github.com/gravitational/teleport/integrations/operator/sidecar"
 )
 
 // samlConnectorClient implements TeleportResourceClient and offers CRUD methods needed to reconcile saml_connectors
 type samlConnectorClient struct {
-	TeleportClientAccessor sidecar.ClientAccessor
+	TeleportClientAccessor syncclient.ClientAccessor
 }
 
 // Get gets the Teleport saml_connector of a given name
@@ -78,7 +79,7 @@ func (r samlConnectorClient) Delete(ctx context.Context, name string) error {
 }
 
 // NewSAMLConnectorReconciler instantiates a new Kubernetes controller reconciling saml_connector resources
-func NewSAMLConnectorReconciler(client kclient.Client, accessor sidecar.ClientAccessor) *TeleportResourceReconciler[types.SAMLConnector, *resourcesv2.TeleportSAMLConnector] {
+func NewSAMLConnectorReconciler(client kclient.Client, accessor syncclient.ClientAccessor) *TeleportResourceReconciler[types.SAMLConnector, *resourcesv2.TeleportSAMLConnector] {
 	samlClient := &samlConnectorClient{
 		TeleportClientAccessor: accessor,
 	}

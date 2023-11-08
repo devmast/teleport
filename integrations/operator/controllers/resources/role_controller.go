@@ -20,6 +20,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/gravitational/teleport/integrations/operator/embeddedtbot/syncclient"
+
 	"github.com/gravitational/trace"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -29,7 +31,6 @@ import (
 
 	"github.com/gravitational/teleport/api/types"
 	v5 "github.com/gravitational/teleport/integrations/operator/apis/resources/v5"
-	"github.com/gravitational/teleport/integrations/operator/sidecar"
 )
 
 const teleportRoleKind = "TeleportRole"
@@ -48,7 +49,7 @@ var TeleportRoleGVKV5 = schema.GroupVersionKind{
 type RoleReconciler struct {
 	kclient.Client
 	Scheme                 *runtime.Scheme
-	TeleportClientAccessor sidecar.ClientAccessor
+	TeleportClientAccessor syncclient.ClientAccessor
 }
 
 //+kubebuilder:rbac:groups=resources.teleport.dev,resources=roles,verbs=get;list;watch;create;update;patch;delete

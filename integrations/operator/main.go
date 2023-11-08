@@ -20,13 +20,14 @@ package main
 import (
 	"flag"
 	"os"
-	"time"
 
-	"github.com/gravitational/trace"
+	"github.com/gravitational/teleport/integrations/operator/embeddedtbot"
+
 	apiextv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
@@ -34,14 +35,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	"github.com/gravitational/teleport/api/client/proto"
-	"github.com/gravitational/teleport/api/utils/retryutils"
 	resourcesv1 "github.com/gravitational/teleport/integrations/operator/apis/resources/v1"
 	resourcesv2 "github.com/gravitational/teleport/integrations/operator/apis/resources/v2"
 	resourcesv3 "github.com/gravitational/teleport/integrations/operator/apis/resources/v3"
 	resourcesv5 "github.com/gravitational/teleport/integrations/operator/apis/resources/v5"
 	"github.com/gravitational/teleport/integrations/operator/controllers/resources"
-	sidecar2 "github.com/gravitational/teleport/integrations/operator/sidecar"
 )
 
 var (
@@ -64,78 +62,52 @@ func init() {
 func main() {
 	ctx := ctrl.SetupSignalHandler()
 
-	var err error
-	var metricsAddr string
-	var probeAddr string
-	var pprofAddr string
-	var leaderElectionID string
-	var syncPeriodString string
-
-	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
-	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
-	// pprof is disabled by default
-	flag.StringVar(&pprofAddr, "pprof-bind-address", "", "The address the pprof endpoint binds to, leave empty to disable.")
-	flag.StringVar(&leaderElectionID, "leader-election-id", "431e83f4.teleport.dev", "Leader Election Id to use")
-	flag.StringVar(&syncPeriodString, "sync-period", "10h", "Operator sync period (format: https://pkg.go.dev/time#ParseDuration)")
-
+	config := &operatorConfig{}
+	config.BindFlags(flag.CommandLine)
 	opts := zap.Options{
 		Development: true,
 	}
 	opts.BindFlags(flag.CommandLine)
+	botConfig := &embeddedtbot.BotConfig{}
+	botConfig.BindFlags(flag.CommandLine)
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 
-	namespace, err := GetKubernetesNamespace()
+	err := config.CheckAndSetDefaults()
 	if err != nil {
-		setupLog.Error(err, "unable to read the namespace, you can force a namespace by setting the POD_NAMESPACE env variable")
+		setupLog.Error(err, "invalid configuration")
 		os.Exit(1)
 	}
 
-	syncPeriod, err := time.ParseDuration(syncPeriodString)
+	bot, err := embeddedtbot.New(ctx, botConfig)
 	if err != nil {
-		setupLog.Error(err, "invalid sync-period, please ensure the value is correctly parsed with https://pkg.go.dev/time#ParseDuration")
+		setupLog.Error(err, "unable to build tbot")
+		os.Exit(1)
+	}
+
+	pong, err := bot.Preflight(ctx)
+	if err != nil {
+		setupLog.Error(err, "tbot preflight checks failed")
 		os.Exit(1)
 	}
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
-		Scheme:                 scheme,
-		MetricsBindAddress:     metricsAddr,
-		Port:                   9443,
-		HealthProbeBindAddress: probeAddr,
-		LeaderElection:         true,
-		LeaderElectionID:       leaderElectionID,
-		Namespace:              namespace,
-		SyncPeriod:             &syncPeriod,
-		PprofBindAddress:       pprofAddr,
+		Scheme:                  scheme,
+		MetricsBindAddress:      config.metricsAddr,
+		Port:                    9443,
+		HealthProbeBindAddress:  config.probeAddr,
+		LeaderElection:          true,
+		LeaderElectionID:        config.leaderElectionID,
+		LeaderElectionNamespace: config.namespace,
+		Namespace:               config.namespace,
+		SyncPeriod:              &config.syncPeriod,
+		PprofBindAddress:        config.pprofAddr,
 	})
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
 		os.Exit(1)
 	}
-
-	var bot *sidecar2.Bot
-	var features *proto.Features
-
-	retry, err := retryutils.NewLinear(retryutils.LinearConfig{
-		Step: 100 * time.Millisecond,
-		Max:  time.Second,
-	})
-	if err != nil {
-		setupLog.Error(err, "failed to setup retry")
-		os.Exit(1)
-	}
-	if err := retry.For(ctx, func() error {
-		bot, features, err = sidecar2.CreateAndBootstrapBot(ctx, sidecar2.Options{})
-		if err != nil {
-			setupLog.Error(err, "failed to connect to teleport cluster, backing off")
-		}
-		return trace.Wrap(err)
-	}); err != nil {
-		setupLog.Error(err, "failed to setup teleport client")
-		os.Exit(1)
-	}
-	setupLog.Info("connected to Teleport")
 
 	if err = (&resources.RoleReconciler{
 		Client:                 mgr.GetClient(),
@@ -158,7 +130,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	if features.OIDC {
+	if pong.ServerFeatures.OIDC {
 		if err = resources.NewOIDCConnectorReconciler(mgr.GetClient(), bot.GetSyncClient).
 			SetupWithManager(mgr); err != nil {
 			setupLog.Error(err, "unable to create controller", "controller", "TeleportOIDCConnector")
@@ -168,7 +140,7 @@ func main() {
 		setupLog.Info("OIDC connectors are only available in Teleport Enterprise edition. TeleportOIDCConnector resources won't be reconciled")
 	}
 
-	if features.SAML {
+	if pong.ServerFeatures.SAML {
 		if err = resources.NewSAMLConnectorReconciler(mgr.GetClient(), bot.GetSyncClient).
 			SetupWithManager(mgr); err != nil {
 			setupLog.Error(err, "unable to create controller", "controller", "TeleportSAMLConnector")
@@ -179,7 +151,7 @@ func main() {
 	}
 
 	// Login Rules are enterprise-only but there is no specific feature flag for them.
-	if features.OIDC || features.SAML {
+	if pong.ServerFeatures.OIDC || pong.ServerFeatures.SAML {
 		if err := resources.NewLoginRuleReconciler(mgr.GetClient(), bot.GetSyncClient).SetupWithManager(mgr); err != nil {
 			setupLog.Error(err, "unable to create controller", "controller", "TeleportLoginRule")
 			os.Exit(1)
@@ -208,10 +180,6 @@ func main() {
 	if err := mgr.AddReadyzCheck("readyz", healthz.Ping); err != nil {
 		setupLog.Error(err, "unable to set up ready check")
 		os.Exit(1)
-	}
-
-	if err := mgr.Add(bot); err != nil {
-		setupLog.Error(err, "unable to setup bot ")
 	}
 
 	setupLog.Info("starting manager")
