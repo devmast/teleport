@@ -30,22 +30,22 @@
               "forScopes": ["enterprise"]
             },
 	    {
-	      "title": "Teleport Cloud (Linux)",
+	      "title": "Linux",
 	      "slug": "/upgrading/cloud-linux/",
 	      "forScopes": ["cloud", "team"]
 	    },
 	    {
-	      "title": "Teleport Cloud (Kubernetes)",
+	      "title": "Kubernetes",
 	      "slug": "/upgrading/cloud-kubernetes/",
 	      "forScopes": ["cloud", "team"]
 	    },
             {
-              "title": "Self-Hosted Teleport (Linux)",
+              "title": "Self-Hosted Linux",
               "slug": "/upgrading/self-hosted-linux/",
               "forScopes": ["enterprise", "oss"]
             },
 	    {
-	      "title": "Self-Hosted Teleport (Kubernetes)",
+	      "title": "Self-Hosted Kubernetes",
 	      "slug": "/upgrading/self-hosted-kubernetes/",
 	      "forScopes": ["enterprise", "oss"]
 	    }
