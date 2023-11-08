@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import React from 'react';
+import React, { useEffect } from 'react';
 
 import {
   OverrideUserAgent,
@@ -22,31 +22,85 @@ import {
 } from 'shared/components/OverrideUserAgent';
 
 import { ContextProvider } from 'teleport';
+import cfg from 'teleport/config';
 import { UserContext } from 'teleport/User/UserContext';
 import { createTeleportContext } from 'teleport/mocks/contexts';
 import { makeDefaultUserPreferences } from 'teleport/services/userPreferences/userPreferences';
 
 import { SetupConnect } from './SetupConnect';
 
+const { worker, rest } = window.msw;
+
 export default {
   title: 'Teleport/Discover/ConnectMyComputer/SetupConnect',
+  decorators: [
+    Story => {
+      worker.resetHandlers();
+      return <Story />;
+    },
+  ],
 };
 
-export const macOS = () => (
-  <OverrideUserAgent userAgent={UserAgent.macOS}>
-    <Provider>
-      <SetupConnect prevStep={() => {}} />
-    </Provider>
-  </OverrideUserAgent>
-);
+const pollingWorker = () => {
+  worker.use(
+    rest.get(cfg.api.nodesPath, (req, res, ctx) => res(ctx.delay('infinite')))
+  );
+};
 
-export const Linux = () => (
-  <OverrideUserAgent userAgent={UserAgent.Linux}>
+export const macOS = () => {
+  pollingWorker();
+  return (
+    <OverrideUserAgent userAgent={UserAgent.macOS}>
+      <Provider>
+        <SetupConnect prevStep={() => {}} />
+      </Provider>
+    </OverrideUserAgent>
+  );
+};
+
+export const Linux = () => {
+  pollingWorker();
+  return (
+    <OverrideUserAgent userAgent={UserAgent.Linux}>
+      <Provider>
+        <SetupConnect prevStep={() => {}} />
+      </Provider>
+    </OverrideUserAgent>
+  );
+};
+
+export const Polling = () => {
+  pollingWorker();
+
+  return (
     <Provider>
       <SetupConnect prevStep={() => {}} />
     </Provider>
-  </OverrideUserAgent>
-);
+  );
+};
+
+export const PollingSuccess = () => {
+  worker.use(
+    rest.get(cfg.api.nodesPath, (req, res, ctx) => {
+      return res(ctx.json({ items: [{ id: '1234', hostname: 'foo' }] }));
+    })
+  );
+  worker.use(
+    rest.get(cfg.api.nodesPath, (req, res, ctx) => {
+      return res.once(ctx.json({ items: [] }));
+    })
+  );
+
+  return (
+    <Provider>
+      <SetupConnect prevStep={() => {}} />
+    </Provider>
+  );
+};
+
+// TODO: Polling Error
+// TODO: Shorten the interval and timeouts.
+// TODO: Hints.
 
 const Provider = ({ children }) => {
   const ctx = createTeleportContext();

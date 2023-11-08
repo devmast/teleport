@@ -14,22 +14,39 @@
  * limitations under the License.
  */
 
-import React from 'react';
+import React, { useEffect, useCallback, useState, useRef } from 'react';
 
 import { ButtonSecondary } from 'design/Button';
 import { Platform, getPlatform } from 'design/platform';
 import { Text, Flex } from 'design';
+import * as Icons from 'design/Icon';
 import { MenuButton, MenuItem } from 'shared/components/MenuAction';
 import { Path, makeDeepLinkWithSafeInput } from 'shared/deepLinks';
 
 import useTeleport from 'teleport/useTeleport';
 
-import { ActionButtons, Header, StyledBox } from 'teleport/Discover/Shared';
+import {
+  ActionButtons,
+  Header,
+  StyledBox,
+  TextIcon,
+} from 'teleport/Discover/Shared';
+import { usePoll } from 'teleport/Discover/Shared/usePoll';
+
+import {
+  HintBox,
+  SuccessBox,
+  WaitingInfo,
+} from 'teleport/Discover/Shared/HintBox';
 
 import type { AgentStepProps } from '../../types';
 
+const PING_INTERVAL = 1000 * 3; // 3 seconds
+const SHOW_HINT_TIMEOUT = 1000 * 60 * 5; // 5 minutes
+
 export function SetupConnect(props: AgentStepProps) {
   const ctx = useTeleport();
+  const clusterId = ctx.storeUser.getClusterId();
   const { cluster, username } = ctx.storeUser.state;
   const platform = getPlatform();
   const downloadLinks = getConnectDownloadLinks(platform, cluster.proxyVersion);
@@ -38,6 +55,109 @@ export function SetupConnect(props: AgentStepProps) {
     username,
     path: Path.ConnectMyComputer,
   });
+  const [isPolling, setIsPolling] = useState(true);
+
+  // 1. Do an initial fetch of existing node IDs that have teleport.dev/connect-my-computer/owner
+  // set to the current username.
+  // 2. Begin polling using the same criteria and compare resulting IDs to the initial fetch.
+  // 3. If there's a new node, assume that it's the new node that just joined.
+
+  const initialNodeIdsRef = useRef<Set<string>>(null);
+  const newNode = usePoll(
+    useCallback(
+      async signal => {
+        const request = {
+          // TODO: Use constants.js for the label name.
+          query: `labels["teleport.dev/connect-my-computer/owner"] == "${username}"`,
+          // An arbitrary limit where we bank on the fact that no one is going to have 50 Connect My Computer
+          // nodes assigned to them running at the same time.
+          limit: 50,
+        };
+
+        const response = await ctx.nodeService.fetchNodes(
+          clusterId,
+          request,
+          signal
+        );
+
+        console.log('response', response.agents);
+
+        if (initialNodeIdsRef.current === null) {
+          initialNodeIdsRef.current = new Set(
+            response.agents.map(agent => agent.id)
+          );
+          return null;
+        }
+
+        const node = response.agents.find(
+          agent => !initialNodeIdsRef.current.has(agent.id)
+        );
+
+        if (node) {
+          setIsPolling(false);
+        }
+
+        return node;
+      },
+      [ctx.nodeService, username, clusterId]
+    ),
+    isPolling,
+    PING_INTERVAL
+  );
+
+  const [showHint, setShowHint] = useState(false);
+  useEffect(() => {
+    // TODO: Scenario in which a cert refresh is needed in order to see the node.
+    if (isPolling) {
+      const id = window.setTimeout(() => setShowHint(true), SHOW_HINT_TIMEOUT);
+
+      return () => window.clearTimeout(id);
+    }
+  }, [isPolling]);
+
+  let hint: JSX.Element;
+  // TODO: Stories for different hint variations.
+  if (showHint && !newNode) {
+    hint = (
+      <HintBox header="We're still looking for your computer">
+        <Text mb={3}>
+          There are a couple of possible reasons for why we haven't been able to
+          detect your computer.
+        </Text>
+
+        {/* the computer was already added before the flow was started */}
+        <Text mb={1}>- TODO</Text>
+
+        <Text mb={3}>- TODO.</Text>
+
+        <Text>
+          We'll continue to look for the computer whilst you diagnose the issue.
+        </Text>
+      </HintBox>
+    );
+  } else if (newNode) {
+    hint = (
+      <SuccessBox>
+        <Text>
+          Your computer, <strong>{newNode.hostname}</strong>, has been detected!
+        </Text>
+      </SuccessBox>
+    );
+  } else {
+    hint = (
+      <WaitingInfo>
+        <TextIcon
+          css={`
+            white-space: pre;
+          `}
+        >
+          <Icons.Restore size="medium" mr={2} />
+        </TextIcon>
+        After your computer is connected to the cluster, we’ll automatically
+        detect it.
+      </WaitingInfo>
+    );
+  }
 
   return (
     <Flex flexDirection="column" alignItems="flex-start" mb={2} gap={4}>
@@ -80,9 +200,11 @@ export function SetupConnect(props: AgentStepProps) {
         </ButtonSecondary>
       </StyledBox>
 
+      {hint}
+
       <ActionButtons
-        onProceed={() => {}}
-        disableProceed={true}
+        onProceed={props.nextStep}
+        disableProceed={!newNode}
         onPrev={props.prevStep}
       />
     </Flex>
