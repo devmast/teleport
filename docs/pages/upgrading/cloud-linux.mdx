@@ -104,6 +104,9 @@ automatic upgrades:
    $ ls /etc/yum.repos.d/teleport.repo
    ```
 
+   The upgrader checks the repository for available releases, so make sure that
+   it is up to date.
+
 1. If the repository was added, make sure the Teleport binary installed on the
    agent can run the automatic upgrader:
 
@@ -128,7 +131,7 @@ automatic upgrades:
    $ sudo chown <your-teleport-user> /etc/teleport-upgrade.d/schedule
    ```
 
-1. Verify that the updater can see your version endpoint by checking for
+1. Verify that the upgrader can see your version endpoint by checking for
    updates:
 
    ```code
@@ -143,22 +146,24 @@ automatic upgrades:
    an upgrade is available (1.2.3 -> 2.3.4)
    ```
 
-   The updater may display warnings about not having a valid upgrade schedule.
+   The upgrader may display warnings about not having a valid upgrade schedule.
    This is expected immediately after install as the maintenance schedule might
    not be exported yet.
 
-1. Ensure that the updater is running:
+1. Ensure that the upgrader is running:
 
    ```code
    $ sudo systemctl status teleport-upgrade
    ```
 
-1. If the agent is not automatically updated, you can invoke the updater
-   manually and look at its logs:
+## Troubleshooting
 
-   ```code
-   $ sudo teleport-upgrade run
-   ```
+If the agent is not automatically updated, you can invoke the upgrader manually
+and look at its logs:
+
+```code
+$ sudo teleport-upgrade run
+```
 
 To suspend automatic upgrades, disable the systemd timer:
 
